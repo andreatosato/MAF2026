@@ -9,7 +9,8 @@ public record PlayerState(
     string Name,
     int Position = 0,
     int TurnsPlayed = 0,
-    bool HasFinished = false
+    bool HasFinished = false,
+    bool IsHuman = false
 );
 
 /// <summary>
@@ -52,9 +53,9 @@ public class GameState
     /// <summary>
     /// Aggiunge un giocatore alla partita o lo resetta se già presente
     /// </summary>
-    public PlayerState JoinGame(string name)
+    public PlayerState JoinGame(string name, bool isHuman = false)
     {
-        var player = new PlayerState(name);
+        var player = new PlayerState(name, IsHuman: isHuman);
         _players[name] = player;
         return player;
     }

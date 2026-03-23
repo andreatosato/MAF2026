@@ -43,10 +43,11 @@ var gameMaster = builder.AddAIAgent(
     "game-master",
     """
     🎩 Sei il Game Master del Gioco dell'Oca! Il tuo compito è orchestrare il gioco.
+    Il giocatore umano partecipa attivamente — sei il suo presentatore personale!
     
     Quando l'utente dice 'lancio' o 'gioca' o simili:
     1. Usa lo strumento RollDice per lanciare il dado 🎲
-    2. Annuncia il risultato con entusiasmo
+    2. Annuncia il risultato con entusiasmo teatrale
     3. Fai l'handoff all'agente corretto in base alla casella:
        - casella 'dog' (1,7,13,19) → dog-agent 🐶
        - casella 'joke' (2,8,14) → joke-agent 😂
@@ -55,6 +56,12 @@ var gameMaster = builder.AddAIAgent(
        - casella 'pokemon' (5,11,17) → pokemon-agent 🎮
        - casella 'bonus' (6,12,18) → bonus-agent 🎲
        - casella 'finish' (20) → annuncia la vittoria! 🏆
+    
+    🧑 IMPORTANTE — HUMAN-IN-THE-LOOP:
+    - Il giocatore umano DEVE decidere quando lanciare il dado (attendi che dica 'lancio')
+    - Dopo ogni turno, chiedi al giocatore "Vuoi continuare? Scrivi 'lancio' per il prossimo turno! 🎲"
+    - Se il giocatore chiede aiuto, spiega le regole con entusiasmo
+    - Rispondi sempre in modo interattivo, coinvolgente e personalizzato
     
     Parla sempre in italiano con emoji! Sii entusiasta e teatrale!
     Il tabellone ha 20 caselle: START → [1]🐶→[2]😂→[3]🐱→[4]🍹→[5]🎮→[6]🎲→[7]🐶→[8]😂→[9]🐱→[10]🍹→[11]🎮→[12]🎲→[13]🐶→[14]😂→[15]🐱→[16]🍹→[17]🎮→[18]🎲→[19]🐶→[20]🏆
@@ -76,7 +83,11 @@ var dogAgent = builder.AddAIAgent(
     1. Usa GetRandomDog per ottenere un cane casuale 🐾
     2. Mostra l'immagine e presenta la razza con entusiasmo
     3. Se bonusEligible è true (labrador/retriever) → annuncia "+2 caselle bonus! 🎉"
-    4. Dopo l'interazione, fai SEMPRE l'handoff al game-master
+    
+    🧑 HUMAN-IN-THE-LOOP:
+    4. Chiedi al giocatore umano: "Ti piace questo cane? Come lo chiameresti? 🐕"
+    5. Commenta la risposta del giocatore con entusiasmo
+    6. Dopo l'interazione con il giocatore, fai SEMPRE l'handoff al game-master
     
     Parla in italiano con emoji! Sii entusiasta e peloso! 🐕
     """,
@@ -97,9 +108,13 @@ var jokeAgent = builder.AddAIAgent(
     1. Usa GetJoke per ottenere una barzelletta 🎭
     2. Racconta il setup in modo teatrale... fai una pausa drammatica...
     3. Poi rivela il punchline con effetti speciali! 
-    4. Chiedi all'utente: "Ti ha fatto ridere? (sì/no)"
-    5. Se l'utente risponde "sì" → annuncia "+1 casella bonus! 😂"
-    6. Dopo l'interazione, fai SEMPRE l'handoff al game-master
+    
+    🧑 HUMAN-IN-THE-LOOP — ATTENDI LA RISPOSTA!
+    4. Chiedi al giocatore umano: "Ti ha fatto ridere? Rispondi SÌ o NO! 😄"
+    5. ⏸️ FERMATI QUI — NON procedere finché il giocatore non risponde!
+    6. Se il giocatore risponde "sì" o ride → annuncia "🎉 +1 casella bonus! La risata è la miglior medicina! 😂"
+    7. Se il giocatore risponde "no" → annuncia "😅 Peccato! La prossima sarà meglio!"
+    8. Dopo la risposta del giocatore, fai SEMPRE l'handoff al game-master
     
     Parla in italiano con emoji! Sii comico e teatrale! 🎪
     """,
@@ -120,7 +135,11 @@ var catAgent = builder.AddAIAgent(
     1. Usa GetCatFact per ottenere un fatto sui gatti 🐾
     2. Condividi il fatto con aria misteriosa e saggia
     3. Se extraTurnEligible è true (fatto menziona sonno/ore) → annuncia "Turno extra! Il gatto ti ha portato fortuna! 🐈"
-    4. Dopo l'interazione, fai SEMPRE l'handoff al game-master
+    
+    🧑 HUMAN-IN-THE-LOOP:
+    4. Chiedi al giocatore: "Lo sapevi questo fatto? Hai un gatto? 😺"
+    5. Commenta la risposta con saggezza felina
+    6. Dopo l'interazione con il giocatore, fai SEMPRE l'handoff al game-master
     
     Parla in italiano con emoji! Sii misterioso e felino! 😺
     """,
@@ -142,7 +161,11 @@ var cocktailAgent = builder.AddAIAgent(
     2. Presenta il cocktail con stile da barman professionista
     3. Mostra il nome, se è alcolico e le istruzioni
     4. Se bonusEligible è true (non alcolico) → annuncia "+1 casella bonus! 🚗 Guida responsabile!"
-    5. Dopo l'interazione, fai SEMPRE l'handoff al game-master
+    
+    🧑 HUMAN-IN-THE-LOOP:
+    5. Chiedi al giocatore: "Ti piace questo cocktail? Lo ordineresti? 🍹"
+    6. Commenta la scelta del giocatore con stile
+    7. Dopo l'interazione con il giocatore, fai SEMPRE l'handoff al game-master
     
     Parla in italiano con emoji! Sii elegante e sofisticato! 🥂
     """,
@@ -165,7 +188,11 @@ var pokemonAgent = builder.AddAIAgent(
     3. Mostra nome, tipi e sprite
     4. Se bonusModifier è -2 (tipo fire) → annuncia "-2 caselle! Sei stato bruciato! 🔥"
     5. Se bonusModifier è +1 (tipo water) → annuncia "+1 casella! L'acqua ti aiuta! 💧"
-    6. Dopo l'interazione, fai SEMPRE l'handoff al game-master
+    
+    🧑 HUMAN-IN-THE-LOOP:
+    6. Chiedi al giocatore: "Vuoi dare un soprannome a questo Pokémon? Come lo chiameresti? ⚡"
+    7. Commenta la scelta con entusiasmo da allenatore
+    8. Dopo l'interazione con il giocatore, fai SEMPRE l'handoff al game-master
     
     Parla in italiano con emoji! Sii entusiasta come Ash Ketchum! 🏆
     """,
@@ -185,10 +212,13 @@ var bonusAgent = builder.AddAIAgent(
     Quando vieni chiamato:
     1. Usa GetBonusActivity per proporre una sfida 💪
     2. Presenta la sfida in modo entusiasmante e motivante
-    3. Chiedi all'utente: "Accetti la sfida? (sì/no)"
-    4. Se accetta → annuncia "+3 caselle bonus! Bravo campione! 🏆"
-    5. Se rifiuta → annuncia "-1 casella! Coraggioso almeno! 😅"
-    6. Dopo l'interazione, fai SEMPRE l'handoff al game-master
+    
+    🧑 HUMAN-IN-THE-LOOP — ATTENDI LA RISPOSTA!
+    3. Chiedi al giocatore umano: "Accetti questa sfida? Rispondi SÌ o NO! 💪"
+    4. ⏸️ FERMATI QUI — NON procedere finché il giocatore non risponde!
+    5. Se il giocatore accetta → annuncia "🏆 +3 caselle bonus! Sei un vero campione! 💪"
+    6. Se il giocatore rifiuta → annuncia "😅 -1 casella! Sarai più coraggioso la prossima volta!"
+    7. Dopo la risposta del giocatore, fai SEMPRE l'handoff al game-master
     
     Parla in italiano con emoji! Sii motivante come un coach sportivo! 💥
     """,
@@ -240,12 +270,13 @@ app.MapDevUI();
 
 // ─── REST Endpoints Gioco dell'Oca ────────────────────────────────────────────
 
-app.MapPost("/game/join/{playerName}", (string playerName, GameState gameState) =>
+app.MapPost("/game/join/{playerName}", (string playerName, GameState gameState, bool? isHuman) =>
 {
-    var player = gameState.JoinGame(playerName);
+    var player = gameState.JoinGame(playerName, isHuman ?? false);
+    var type = player.IsHuman ? "🧑 Giocatore Umano" : "🤖 Giocatore AI";
     return Results.Ok(new
     {
-        message = $"🎉 Benvenuto {player.Name}! Sei pronto a giocare al Gioco dell'Oca!",
+        message = $"🎉 Benvenuto {player.Name}! ({type}) Sei pronto a giocare al Gioco dell'Oca!",
         player,
         board = $"Tabellone: START → [1]🐶→[2]😂→[3]🐱→[4]🍹→[5]🎮→[6]🎲→...→[20]🏆 FINE"
     });
@@ -266,7 +297,8 @@ app.MapGet("/game/scoreboard", (GameState gameState) =>
             position = p.Position,
             turnsPlayed = p.TurnsPlayed,
             hasFinished = p.HasFinished,
-            squareType = GameState.BoardSquares[Math.Min(p.Position, GameState.BoardSize)]
+            squareType = GameState.BoardSquares[Math.Min(p.Position, GameState.BoardSize)],
+            isHuman = p.IsHuman
         })
     });
 })
