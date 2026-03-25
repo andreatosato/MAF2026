@@ -11,12 +11,15 @@ Una demo completa del **Gioco dell'Oca** (Goose Game) costruita con **Microsoft 
 
 | Feature | Dove viene usata |
 |---|---|
-| **Handoff Workflow** | Il Game Master passa il turno all'agente specializzato della casella |
+| **1️⃣ Workflow Handoff** | Il Game Master passa il turno all'agente specializzato della casella |
+| **2️⃣ Context Windows** | `SlidingWindowCompactionStrategy` per gestire la storia conversazionale |
+| **3️⃣ Aspire / OpenTelemetry** | Log, trace e metriche AI con dashboard Aspire |
+| **4️⃣ Agent-as-a-Tool** | L'Agente Arbitro esposto come tool via `.AsAIFunction()` |
+| **5️⃣ Cosmos DB** | Salvataggio cronologia chat con `WithCosmosDBChatHistoryProvider` |
+| **6️⃣ GPT Realtime** | Endpoint `/realtime/session` per interazione vocale |
+| **Human-in-the-Loop** | Il giocatore umano risponde a domande, accetta sfide, e prende decisioni |
 | **DevUI** | Interfaccia web interattiva per testare e debuggare gli agenti |
 | **Function Tools** | Ogni agente chiama una API pubblica (no auth!) |
-| **Human-in-the-Loop** | Il giocatore umano risponde a domande, accetta sfide, e prende decisioni |
-| **Multi-user Sessions** | `GameState` con `ConcurrentDictionary` per più giocatori contemporanei |
-| **AgentWorkflowBuilder** | Costruzione dichiarativa del workflow con pattern Handoff |
 
 ---
 
@@ -49,7 +52,8 @@ START → [1]🐶 → [2]😂 → [3]🐱 → [4]🍹 → [5]🎮 → [6]🎲 �
                     │                                             │
       ┌─────────┐   │   ┌──────────────┐     Handoff             │
       │  User   │───┼──▶│  Game Master │◀──────────────────┐     │
-      └─────────┘   │   │  🎩 (dice)   │                   │     │
+      │ (HITL)  │   │   │  🎩 (dice)   │                   │     │
+      └─────────┘   │   │  ⚖️ Arbitro   │ ← Agent-as-Tool  │     │
                     │   └──────┬───────┘                   │     │
                     │          │ Handoff                   │     │
                     │    ┌─────┴──────────────────────┐    │     │
@@ -63,9 +67,16 @@ START → [1]🐶 → [2]😂 → [3]🐱 → [4]🍹 → [5]🎮 → [6]🎲 �
                     ┌───────────────┴───────────────┐
                     │       ASP.NET Core Host        │
                     │  /devui  /openai/v1/responses  │
-                    │  /game/join/{player}           │
-                    │  /game/scoreboard              │
-                    └────────────────────────────────┘
+                    │  /game/join  /game/scoreboard  │
+                    │  /realtime/session             │
+                    └───────┬────────────────────────┘
+                            │
+              ┌─────────────┼─────────────┐
+              │             │             │
+        ┌─────▼──────┐ ┌───▼────┐ ┌──────▼──────┐
+        │ Cosmos DB  │ │ Aspire │ │ GPT Realtime│
+        │ Chat Store │ │ OTel   │ │ WebSocket   │
+        └────────────┘ └────────┘ └─────────────┘
 ```
 
 ---
@@ -118,21 +129,106 @@ Per visualizzarla:
 
 ---
 
+## 4️⃣ Agent-as-a-Tool
+
+L'**Agente Arbitro** (⚖️) è un agente specializzato nelle regole del gioco, esposto come **Function Tool** tramite `.AsAIFunction()`:
+
+```csharp
+// L'Arbitro viene creato come agente standalone
+var arbitroAgent = chatClient.AsAIAgent(
+    name: "arbitro-agent",
+    instructions: "⚖️ Sei l'Arbitro del Gioco dell'Oca! Verifica le regole...",
+    description: "Agente Arbitro che verifica le regole del gioco");
+
+// ...e registrato come tool del Game Master
+gameMaster.WithAITool(sp => arbitroAgent.AsAIFunction());
+```
+
+Il Game Master può **chiamare l'Arbitro come un tool** per verificare regole complesse — questo è il pattern **Agent-as-a-Tool** di Microsoft Agent Framework!
+
+---
+
+## 5️⃣ Salvataggio Conversazione su Cosmos DB
+
+Se `COSMOS_CONNECTION_STRING` è configurata, la cronologia della chat viene salvata automaticamente su **Azure Cosmos DB** tramite `CosmosChatHistoryProvider`:
+
+```csharp
+var options = new ChatClientAgentOptions();
+options.WithCosmosDBChatHistoryProvider(
+    cosmosConnectionString, cosmosDatabase, cosmosContainer);
+```
+
+Configurazione in `appsettings.json`:
+```json
+{
+  "COSMOS_CONNECTION_STRING": "AccountEndpoint=https://YOUR-COSMOS.documents.azure.com:443/;AccountKey=...",
+  "COSMOS_DATABASE_NAME": "GooseGameDB",
+  "COSMOS_CONTAINER_NAME": "ChatHistory"
+}
+```
+
+---
+
+## 3️⃣ Aspire / OpenTelemetry — AI Logging
+
+L'app è configurata con **OpenTelemetry** compatibile con la **dashboard .NET Aspire**, per monitorare log, trace e metriche di tutte le chiamate AI:
+
+```csharp
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource => resource.AddService("AIGooseGame"))
+    .WithMetrics(metrics => metrics.AddAspNetCoreInstrumentation().AddHttpClientInstrumentation()
+        .AddOtlpExporter(opt => opt.Endpoint = new Uri(otelEndpoint)))
+    .WithTracing(tracing => tracing.AddAspNetCoreInstrumentation().AddHttpClientInstrumentation()
+        .AddOtlpExporter(opt => opt.Endpoint = new Uri(otelEndpoint)));
+```
+
+Per avviare la dashboard Aspire:
+```bash
+docker run --rm -p 18888:18888 -p 4317:18889 mcr.microsoft.com/dotnet/aspire-dashboard
+```
+Poi apri `http://localhost:18888` per visualizzare trace e log degli agenti.
+
+---
+
+## 6️⃣ GPT Realtime — Interazione Vocale
+
+L'endpoint `/realtime/session` verifica la connessione e fornisce le info per la sessione WebSocket di **GPT-4o Realtime API**:
+
+```
+GET /realtime/session
+→ {
+    "deployment": "gpt-4o-realtime-preview",
+    "status": "ready",
+    "websocketUrl": "wss://YOUR-RESOURCE.openai.azure.com/openai/realtime?..."
+  }
+```
+
+Il client può connettersi via WebSocket per **interazione vocale in tempo reale** con il Game Master.
+
+---
+
+## 📖 Descrizione Completa del Gioco
+
+Le regole complete, le prove, il flusso di gioco e la spiegazione dettagliata di tutte le caselle sono in [`docs/come-si-gioca.md`](docs/come-si-gioca.md).
+
+---
+
 ## 📁 Struttura del Progetto
 
 ```
 src/
 └── AIGooseGame/
-    ├── AIGooseGame.csproj          # Packages: Microsoft.Agents.AI.*
-    ├── Program.cs                  # 7 agenti + Handoff workflow + HITL + DevUI + endpoints
+    ├── AIGooseGame.csproj          # Packages: Microsoft.Agents.AI.*, Cosmos, OTel
+    ├── Program.cs                  # 8 agenti + Workflow + Agent-as-Tool + Cosmos + OTel + Realtime
     ├── GameState.cs                # Multi-player con ConcurrentDictionary (human/AI)
     ├── Plugins/
     │   └── PublicApiPlugin.cs      # 6 API pubbliche + RollDice
-    ├── appsettings.json            # Azure OpenAI config
+    ├── appsettings.json            # Azure OpenAI + Cosmos + OTel config
     ├── appsettings.Development.json
     └── Properties/
         └── launchSettings.json    # http://localhost:5150
 docs/
+├── come-si-gioca.md               # Descrizione completa del gioco e delle prove
 └── presentation.md                # Slide della presentazione (Marp)
 ```
 
@@ -141,13 +237,23 @@ docs/
 ## 📦 NuGet Packages
 
 ```xml
+<!-- Microsoft Agent Framework -->
 <PackageReference Include="Microsoft.Agents.AI" Version="1.0.0-rc4" />
 <PackageReference Include="Microsoft.Agents.AI.DevUI" Version="1.0.0-preview.260311.1" />
 <PackageReference Include="Microsoft.Agents.AI.Hosting" Version="1.0.0-preview.260311.1" />
 <PackageReference Include="Microsoft.Agents.AI.Hosting.OpenAI" Version="1.0.0-alpha.260311.1" />
 <PackageReference Include="Microsoft.Agents.AI.Workflows" Version="1.0.0-rc4" />
-<PackageReference Include="Azure.AI.OpenAI" Version="2.1.0" />
-<PackageReference Include="Azure.Identity" Version="1.13.2" />
+<PackageReference Include="Microsoft.Agents.AI.CosmosNoSql" Version="1.0.0-preview.260311.1" />
+
+<!-- Azure OpenAI (con Realtime support) -->
+<PackageReference Include="Azure.AI.OpenAI" Version="2.9.0-beta.1" />
+<PackageReference Include="Azure.Identity" Version="1.17.1" />
+
+<!-- OpenTelemetry / Aspire-compatible logging -->
+<PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.0" />
+<PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.15.0" />
+<PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.1" />
+<PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.15.0" />
 ```
 
 ---
@@ -156,6 +262,9 @@ docs/
 
 - [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0)
 - **Azure OpenAI** con deployment di `gpt-4o-mini` (o modello compatibile)
+- (Opzionale) **Azure OpenAI** con deployment `gpt-4o-realtime-preview` per la modalità voce
+- (Opzionale) **Azure Cosmos DB** per il salvataggio delle conversazioni
+- (Opzionale) **Docker** per la dashboard Aspire: `docker run --rm -p 18888:18888 -p 4317:18889 mcr.microsoft.com/dotnet/aspire-dashboard`
 - (Opzionale) Azure CLI per l'autenticazione con `DefaultAzureCredential`
 
 ---
@@ -201,6 +310,8 @@ dotnet run
 | `http://localhost:5150/openai/v1/conversations` | OpenAI Conversations API |
 | `POST http://localhost:5150/game/join/{nome}` | Entra nella partita |
 | `GET http://localhost:5150/game/scoreboard` | Classifica corrente |
+| `GET http://localhost:5150/realtime/session` | Info per connessione GPT Realtime |
+| `http://localhost:18888` | **Dashboard Aspire** (se Docker attivo) |
 
 ---
 
@@ -254,7 +365,13 @@ Game Master: "Ottimo Mario! Sei alla casella 3!
 
 | Feature | Implementazione |
 |---|---|
-| `AddAIAgent()` | 7 agenti registrati in DI con istruzioni in italiano |
+| **1️⃣ Workflow** `AddWorkflow()` | Handoff workflow bi-direzionale tra 8 agenti |
+| **2️⃣ Context Windows** | `SlidingWindowCompactionStrategy` per gestione storia |
+| **3️⃣ Aspire Log AI** | OpenTelemetry con OTLP exporter verso dashboard Aspire |
+| **4️⃣ Agent-as-a-Tool** | Arbitro esposto come tool via `arbitroAgent.AsAIFunction()` |
+| **5️⃣ Cosmos DB** | `WithCosmosDBChatHistoryProvider` per persistenza chat |
+| **6️⃣ GPT Realtime** | `GetRealtimeClient()` + `StartConversationSessionAsync()` |
+| `AddAIAgent()` | 8 agenti registrati in DI con istruzioni in italiano |
 | `WithAITool()` | Ogni agente ha il suo Function Tool collegato alla API |
 | `AgentWorkflowBuilder.CreateHandoffBuilderWith()` | Game Master come punto di partenza |
 | `.WithHandoffs(gm, [agents])` | GM può passare il turno a 6 agenti |

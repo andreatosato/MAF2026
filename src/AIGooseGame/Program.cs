@@ -9,6 +9,11 @@ using Microsoft.Agents.AI.Workflows;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Hosting;
+using OpenAI.Realtime;
+using OpenTelemetry.Logs;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Builder & Configuration
@@ -27,6 +32,36 @@ var deploymentName = builder.Configuration["AZURE_OPENAI_DEPLOYMENT_NAME"] ?? "g
 
 AzureOpenAIClient azureClient = new(new Uri(endpoint), new DefaultAzureCredential());
 IChatClient chatClient = azureClient.GetChatClient(deploymentName).AsIChatClient();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3️⃣ ASPIRE / OpenTelemetry — AI Logging & Tracing
+// ─────────────────────────────────────────────────────────────────────────────
+// Configurazione OpenTelemetry compatibile con .NET Aspire Dashboard.
+// Avvia la dashboard con: docker run --rm -p 18888:18888 -p 4317:18889 mcr.microsoft.com/dotnet/aspire-dashboard
+// Poi apri http://localhost:18888 per visualizzare log, trace e metriche degli agenti.
+
+var otelEndpoint = builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"] ?? "http://localhost:4317";
+
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource => resource.AddService("AIGooseGame"))
+    .WithMetrics(metrics =>
+    {
+        metrics.AddAspNetCoreInstrumentation()
+               .AddHttpClientInstrumentation()
+               .AddOtlpExporter(opt => opt.Endpoint = new Uri(otelEndpoint));
+    })
+    .WithTracing(tracing =>
+    {
+        tracing.AddAspNetCoreInstrumentation()
+               .AddHttpClientInstrumentation()
+               .AddOtlpExporter(opt => opt.Endpoint = new Uri(otelEndpoint));
+    });
+
+builder.Logging.AddOpenTelemetry(options =>
+{
+    options.SetResourceBuilder(ResourceBuilder.CreateDefault().AddService("AIGooseGame"));
+    options.AddOtlpExporter(opt => opt.Endpoint = new Uri(otelEndpoint));
+});
 
 // Servizi di base ─────────────────────────────────────────────────────────────
 builder.Services.AddHttpClient();
@@ -57,6 +92,9 @@ var gameMaster = builder.AddAIAgent(
        - casella 'bonus' (6,12,18) → bonus-agent 🎲
        - casella 'finish' (20) → annuncia la vittoria! 🏆
     
+    Se hai bisogno di verificare una regola complessa, puoi chiamare lo strumento
+    arbitro-agent (Agent-as-a-Tool) per una risposta autorevole.
+    
     🧑 IMPORTANTE — HUMAN-IN-THE-LOOP:
     - Il giocatore umano DEVE decidere quando lanciare il dado (attendi che dica 'lancio')
     - Dopo ogni turno, chiedi al giocatore "Vuoi continuare? Scrivi 'lancio' per il prossimo turno! 🎲"
@@ -72,6 +110,39 @@ var gameMaster = builder.AddAIAgent(
         var plugin = sp.GetRequiredService<PublicApiPlugin>();
         return AIFunctionFactory.Create(plugin.RollDice);
     });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4️⃣ Agent-as-a-Tool — Arbitro come Function Tool del Game Master
+// ─────────────────────────────────────────────────────────────────────────────
+// L'Agente Arbitro viene esposto come AIFunction tramite .AsAIFunction().
+// Il Game Master può invocarlo come tool per verificare regole complesse.
+
+var arbitroAgent = azureClient.GetChatClient(deploymentName).AsIChatClient()
+    .AsAIAgent(
+        name: "arbitro-agent",
+        instructions: """
+        ⚖️ Sei l'Arbitro del Gioco dell'Oca! Il tuo ruolo è verificare le regole.
+        
+        Quando vieni chiamato, rispondi in modo preciso e autorevole:
+        - Verifica se un bonus/malus è corretto
+        - Conferma le regole della casella
+        - Risolvi eventuali dispute
+        
+        Regole del tabellone:
+        - 🐶 (1,7,13,19): labrador/retriever → +2
+        - 😂 (2,8,14): utente ride → +1
+        - 🐱 (3,9,15): sleep/hours → turno extra
+        - 🍹 (4,10,16): analcolico → +1
+        - 🎮 (5,11,17): fire → -2, water → +1
+        - 🎲 (6,12,18): accetta sfida → +3, rifiuta → -1
+        - 🏆 (20): vittoria!
+        
+        Rispondi in italiano, in modo chiaro e conciso. Sei imparziale e preciso!
+        """,
+        description: "Agente Arbitro che verifica le regole del gioco e risolve dispute");
+
+// Il Game Master usa l'Arbitro come tool (Agent-as-a-Tool pattern!)
+gameMaster.WithAITool(sp => arbitroAgent.AsAIFunction());
 
 // 🐶 Dog Agent — caselle 1, 7, 13, 19
 var dogAgent = builder.AddAIAgent(
@@ -230,7 +301,7 @@ var bonusAgent = builder.AddAIAgent(
     });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Workflow Handoff 🔄
+// 1️⃣ Workflow Handoff 🔄
 // ─────────────────────────────────────────────────────────────────────────────
 
 builder.AddWorkflow("goose-game", (sp, key) =>
@@ -257,6 +328,29 @@ builder.AddWorkflow("goose-game", (sp, key) =>
 builder.AddOpenAIResponses();
 builder.AddOpenAIConversations();
 builder.AddDevUI();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5️⃣ Salvataggio Conversazione su Cosmos DB
+// ─────────────────────────────────────────────────────────────────────────────
+// Configurazione opzionale: se COSMOS_CONNECTION_STRING è presente, abilita
+// il salvataggio automatico della cronologia chat su Azure Cosmos DB.
+// La classe CosmosChatHistoryProvider salva ogni messaggio in un container Cosmos.
+
+var cosmosConnectionString = builder.Configuration["COSMOS_CONNECTION_STRING"];
+if (!string.IsNullOrWhiteSpace(cosmosConnectionString))
+{
+    var cosmosDatabase = builder.Configuration["COSMOS_DATABASE_NAME"] ?? "GooseGameDB";
+    var cosmosContainer = builder.Configuration["COSMOS_CONTAINER_NAME"] ?? "ChatHistory";
+
+    // Registra CosmosChatHistoryProvider come servizio singleton.
+    // Il provider salva automaticamente la cronologia della conversazione su Cosmos DB.
+    builder.Services.AddSingleton(sp =>
+    {
+        var options = new ChatClientAgentOptions();
+        options.WithCosmosDBChatHistoryProvider(cosmosConnectionString, cosmosDatabase, cosmosContainer);
+        return options.ChatHistoryProvider!;
+    });
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // App & Endpoints
@@ -305,6 +399,52 @@ app.MapGet("/game/scoreboard", (GameState gameState) =>
 .WithName("GetScoreboard")
 .WithSummary("Ottieni la classifica corrente");
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 6️⃣ GPT Realtime — Endpoint per interazione vocale
+// ─────────────────────────────────────────────────────────────────────────────
+// Endpoint REST che fornisce le informazioni di connessione per il Realtime API.
+// Il client usa queste info per aprire una sessione WebSocket audio/testo
+// direttamente verso Azure OpenAI (gpt-4o-realtime-preview).
+// Per una sessione completa, il client si connette via WebSocket all'URL fornito.
+
+app.UseWebSockets();
+
+var realtimeDeployment = app.Configuration["AZURE_OPENAI_REALTIME_DEPLOYMENT"] ?? "gpt-4o-realtime-preview";
+
+app.MapGet("/realtime/session", async () =>
+{
+    try
+    {
+#pragma warning disable OPENAI002 // Experimental Realtime API
+        var realtimeClient = azureClient.GetRealtimeClient();
+        // Crea una sessione di conversazione Realtime con il modello specificato
+        var session = await realtimeClient.StartConversationSessionAsync(realtimeDeployment);
+#pragma warning restore OPENAI002
+
+        // La sessione è stata creata con successo — restituisci le info di connessione
+        // Il client WebSocket può connettersi direttamente all'endpoint Azure
+        session.Dispose();
+
+        return Results.Ok(new
+        {
+            deployment = realtimeDeployment,
+            status = "ready",
+            instructions = "GPT Realtime è configurato e pronto. " +
+                          "Connettiti via WebSocket per sessioni audio/testo in tempo reale.",
+            websocketUrl = $"wss://{new Uri(endpoint!).Host}/openai/realtime?api-version=2025-04-01-preview&deployment={realtimeDeployment}",
+            gameInstructions = "🎩 Sei il Game Master del Gioco dell'Oca! Parla in italiano con entusiasmo."
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(
+            detail: $"GPT Realtime non configurato. Assicurati di avere un deployment '{realtimeDeployment}'. Errore: {ex.Message}",
+            statusCode: 503);
+    }
+})
+.WithName("GetRealtimeSession")
+.WithSummary("Verifica e ottieni le info per la connessione GPT Realtime WebSocket");
+
 // ─── Startup Info ─────────────────────────────────────────────────────────────
 
 app.Lifetime.ApplicationStarted.Register(() =>
@@ -320,7 +460,10 @@ app.Lifetime.ApplicationStarted.Register(() =>
         Console.WriteLine($"🤖  Responses:   {addr}/openai/v1/responses");
         Console.WriteLine($"💬  Chats:       {addr}/openai/v1/conversations");
         Console.WriteLine($"🎮  Scoreboard:  {addr}/game/scoreboard");
+        Console.WriteLine($"🎤  Realtime:    {addr}/realtime/session");
     }
+    Console.WriteLine("═══════════════════════════════════════════════════════════");
+    Console.WriteLine("📊  Aspire Dashboard: http://localhost:18888  (se attiva)");
     Console.WriteLine("═══════════════════════════════════════════════════════════\n");
 });
 
