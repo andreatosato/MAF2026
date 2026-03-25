@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="AIGooseGame.AppHost/AIGooseGame.AppHost.csproj" />
+  <Project Path="AIGooseGame.ServiceDefaults/AIGooseGame.ServiceDefaults.csproj" />
+  <Project Path="AIGooseGame/AIGooseGame.csproj" />
+</Solution>

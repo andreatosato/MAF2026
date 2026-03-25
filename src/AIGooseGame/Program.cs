@@ -11,6 +11,7 @@ using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using Microsoft.Extensions.Hosting;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Builder & Configuration
@@ -31,34 +32,9 @@ AzureOpenAIClient azureClient = new(new Uri(endpoint), new DefaultAzureCredentia
 IChatClient chatClient = azureClient.GetChatClient(deploymentName).AsIChatClient();
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 3️⃣ ASPIRE / OpenTelemetry — AI Logging & Tracing
+// 3️⃣ ASPIRE Service Defaults — OpenTelemetry, Health Checks, Resilience
 // ─────────────────────────────────────────────────────────────────────────────
-// Configurazione OpenTelemetry compatibile con .NET Aspire Dashboard.
-// Avvia la dashboard con: docker run --rm -p 18888:18888 -p 4317:18889 mcr.microsoft.com/dotnet/aspire-dashboard
-// Poi apri http://localhost:18888 per visualizzare log, trace e metriche degli agenti.
-
-var otelEndpoint = builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"] ?? "http://localhost:4317";
-
-builder.Services.AddOpenTelemetry()
-    .ConfigureResource(resource => resource.AddService("AIGooseGame"))
-    .WithMetrics(metrics =>
-    {
-        metrics.AddAspNetCoreInstrumentation()
-               .AddHttpClientInstrumentation()
-               .AddOtlpExporter(opt => opt.Endpoint = new Uri(otelEndpoint));
-    })
-    .WithTracing(tracing =>
-    {
-        tracing.AddAspNetCoreInstrumentation()
-               .AddHttpClientInstrumentation()
-               .AddOtlpExporter(opt => opt.Endpoint = new Uri(otelEndpoint));
-    });
-
-builder.Logging.AddOpenTelemetry(options =>
-{
-    options.SetResourceBuilder(ResourceBuilder.CreateDefault().AddService("AIGooseGame"));
-    options.AddOtlpExporter(opt => opt.Endpoint = new Uri(otelEndpoint));
-});
+builder.AddServiceDefaults();
 
 // Servizi di base ─────────────────────────────────────────────────────────────
 builder.Services.AddHttpClient();
@@ -108,6 +84,8 @@ if (!string.IsNullOrWhiteSpace(cosmosConnectionString))
 // ─────────────────────────────────────────────────────────────────────────────
 
 var app = builder.Build();
+
+app.MapDefaultEndpoints();
 
 app.MapOpenAIResponses();
 app.MapOpenAIConversations();
@@ -231,7 +209,7 @@ app.Lifetime.ApplicationStarted.Register(() =>
         Console.WriteLine($"🎤  Realtime:    {addr}/realtime/session");
     }
     Console.WriteLine("═══════════════════════════════════════════════════════════");
-    Console.WriteLine("📊  Aspire Dashboard: http://localhost:18888  (se attiva)");
+    Console.WriteLine("📊  Aspire Dashboard: avvia AIGooseGame.AppHost per orchestrazione completa");
     Console.WriteLine("═══════════════════════════════════════════════════════════\n");
 });
 
