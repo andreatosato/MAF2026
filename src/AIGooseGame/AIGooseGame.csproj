@@ -27,4 +27,11 @@
     <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.15.0" />
   </ItemGroup>
 
+  <!-- Copia Pages/game.html nell'output di build -->
+  <ItemGroup>
+    <Content Include="Pages\game.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>

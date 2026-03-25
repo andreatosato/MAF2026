@@ -361,6 +361,26 @@ app.MapOpenAIResponses();
 app.MapOpenAIConversations();
 app.MapDevUI();
 
+// ─── Game UI — serve game.html come pagina principale ────────────────────────
+app.MapGet("/", () =>
+{
+    // Cerca in ordine: output dir → project dir (dev con dotnet run)
+    var candidates = new[]
+    {
+        Path.Combine(AppContext.BaseDirectory, "Pages", "game.html"),
+        Path.Combine(Directory.GetCurrentDirectory(), "Pages", "game.html"),
+    };
+    var htmlPath = candidates.FirstOrDefault(File.Exists);
+    if (htmlPath is null)
+        return Results.NotFound("game.html non trovato. Assicurati che Pages/game.html esista.");
+
+    var html = File.ReadAllText(htmlPath);
+    return Results.Content(html, "text/html");
+})
+.WithName("GameUI")
+.WithSummary("UI interattiva del Gioco dell'Oca")
+.ExcludeFromDescription();
+
 // ─── REST Endpoints Gioco dell'Oca ────────────────────────────────────────────
 
 app.MapPost("/game/join/{playerName}", (string playerName, GameState gameState, bool? isHuman) =>
@@ -451,11 +471,11 @@ app.Lifetime.ApplicationStarted.Register(() =>
     Console.WriteLine("═══════════════════════════════════════════════════════════");
     foreach (var addr in addresses)
     {
-        Console.WriteLine($"🌐  App:         {addr}");
+        Console.WriteLine($"🎮  GIOCA:       {addr}");
         Console.WriteLine($"🛠️   DevUI:       {addr}/devui");
         Console.WriteLine($"🤖  Responses:   {addr}/openai/v1/responses");
         Console.WriteLine($"💬  Chats:       {addr}/openai/v1/conversations");
-        Console.WriteLine($"🎮  Scoreboard:  {addr}/game/scoreboard");
+        Console.WriteLine($"🏆  Scoreboard:  {addr}/game/scoreboard");
         Console.WriteLine($"🎤  Realtime:    {addr}/realtime/session");
     }
     Console.WriteLine("═══════════════════════════════════════════════════════════");
