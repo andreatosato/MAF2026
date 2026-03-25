@@ -9,7 +9,6 @@ using Microsoft.Agents.AI.Workflows;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Hosting;
-using OpenAI.Realtime;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -411,28 +410,25 @@ app.UseWebSockets();
 
 var realtimeDeployment = app.Configuration["AZURE_OPENAI_REALTIME_DEPLOYMENT"] ?? "gpt-4o-realtime-preview";
 
-app.MapGet("/realtime/session", async () =>
+app.MapGet("/realtime/session", () =>
 {
     try
     {
-#pragma warning disable OPENAI002 // Experimental Realtime API
-        var realtimeClient = azureClient.GetRealtimeClient();
-        // Crea una sessione di conversazione Realtime con il modello specificato
-        var session = await realtimeClient.StartConversationSessionAsync(realtimeDeployment);
-#pragma warning restore OPENAI002
-
-        // La sessione è stata creata con successo — restituisci le info di connessione
-        // Il client WebSocket può connettersi direttamente all'endpoint Azure
-        session.Dispose();
-
+        var host = new Uri(endpoint!).Host;
         return Results.Ok(new
         {
             deployment = realtimeDeployment,
             status = "ready",
-            instructions = "GPT Realtime è configurato e pronto. " +
-                          "Connettiti via WebSocket per sessioni audio/testo in tempo reale.",
-            websocketUrl = $"wss://{new Uri(endpoint!).Host}/openai/realtime?api-version=2025-04-01-preview&deployment={realtimeDeployment}",
-            gameInstructions = "🎩 Sei il Game Master del Gioco dell'Oca! Parla in italiano con entusiasmo."
+            instructions = "GPT Realtime è configurato. " +
+                          "Connettiti via WebSocket per sessioni audio/testo in tempo reale. " +
+                          "Usa GetRealtimeClient().StartConversationSessionAsync() per avviare una sessione.",
+            websocketUrl = $"wss://{host}/openai/realtime?api-version=2025-04-01-preview&deployment={realtimeDeployment}",
+            gameInstructions = "🎩 Sei il Game Master del Gioco dell'Oca! Parla in italiano con entusiasmo.",
+            codeExample = """
+            #pragma warning disable OPENAI002
+            var realtimeClient = azureClient.GetRealtimeClient();
+            var session = await realtimeClient.StartConversationSessionAsync("gpt-4o-realtime-preview");
+            """
         });
     }
     catch (Exception ex)

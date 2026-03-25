@@ -63,9 +63,10 @@ style: |
 |---|---|
 | **5 min** | 🎯 Microsoft Agent Framework — Overview |
 | **5 min** | 🎲 Il Gioco dell'Oca — Concept & Architettura |
-| **10 min** | 🛠️ Code Walkthrough — Agenti, Tools, Workflow |
-| **5 min** | 🧑 Human-in-the-Loop — Il giocatore umano |
-| **15 min** | 🎮 Live Demo — DevUI in azione |
+| **10 min** | 🛠️ Code Walkthrough — Workflow, Tools, Agent-as-a-Tool |
+| **5 min** | 🧑 Human-in-the-Loop + Context Windows |
+| **5 min** | 📊 Aspire OTel + Cosmos DB + GPT Realtime |
+| **10 min** | 🎮 Live Demo — DevUI in azione |
 | **5 min** | 📊 Recap & Risorse |
 
 ---
@@ -255,6 +256,111 @@ Joke Agent:  "🎉 +1 casella bonus!"
 
 ---
 
+# ⚖️ Agent-as-a-Tool (4️⃣)
+
+### Un agente come strumento di un altro agente!
+
+```csharp
+// 1. Crea l'Agente Arbitro
+var arbitroAgent = chatClient.AsAIAgent(
+    name: "arbitro-agent",
+    instructions: "⚖️ Verifica le regole del gioco...",
+    description: "Arbitro delle regole");
+
+// 2. Registralo come tool del Game Master
+gameMaster.WithAITool(sp => arbitroAgent.AsAIFunction());
+```
+
+Il Game Master **chiama l'Arbitro come un tool** quando serve una verifica delle regole!
+
+> `.AsAIFunction()` = trasforma un agente intero in un Function Tool ✨
+
+---
+
+# 🔄 Context Windows (2️⃣)
+
+### Gestione intelligente della storia conversazionale
+
+Il framework offre strategie di **compattazione** per gestire il context window:
+
+- **`SlidingWindowCompactionStrategy`** — Mantiene le ultime N conversazioni
+- **`SummarizationCompactionStrategy`** — Riassume la storia precedente
+- **`TruncationCompactionStrategy`** — Taglia i messaggi più vecchi
+- **`PipelineCompactionStrategy`** — Combina più strategie in pipeline
+
+```csharp
+// Il ChatHistoryMemoryProvider gestisce automaticamente
+// la storia conversazionale di ogni sessione
+```
+
+> Il **context window** è fondamentale per agenti multi-turno come il nostro gioco! 🧠
+
+---
+
+# 📊 Aspire / OpenTelemetry (3️⃣)
+
+### Osservabilità nativa per agenti AI
+
+```csharp
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(r => r.AddService("AIGooseGame"))
+    .WithMetrics(m => m.AddAspNetCoreInstrumentation()
+        .AddOtlpExporter(...))
+    .WithTracing(t => t.AddAspNetCoreInstrumentation()
+        .AddOtlpExporter(...));
+```
+
+**Dashboard Aspire** (`http://localhost:18888`):
+- 📈 **Metriche**: richieste/sec, latenza, errori
+- 🔍 **Trace**: ogni chiamata AI, tool invocation, handoff
+- 📝 **Log**: messaggi strutturati da ogni agente
+
+> `docker run --rm -p 18888:18888 -p 4317:18889 mcr.microsoft.com/dotnet/aspire-dashboard`
+
+---
+
+# 💾 Cosmos DB (5️⃣)
+
+### Salvataggio automatico delle conversazioni
+
+```csharp
+var options = new ChatClientAgentOptions();
+options.WithCosmosDBChatHistoryProvider(
+    connectionString, "GooseGameDB", "ChatHistory");
+```
+
+**Cosa viene salvato su Cosmos DB:**
+- 💬 Ogni messaggio utente e agente
+- 🔄 Le transizioni di handoff
+- 🎲 I risultati dei tool calls
+- 🏆 Lo stato della partita
+
+> Le conversazioni **sopravvivono** ai restart dell'app! 🔒
+
+---
+
+# 🎤 GPT Realtime (6️⃣)
+
+### Interazione vocale in tempo reale
+
+```csharp
+#pragma warning disable OPENAI002
+var realtimeClient = azureClient.GetRealtimeClient();
+var session = await realtimeClient
+    .StartConversationSessionAsync("gpt-4o-realtime-preview");
+#pragma warning restore OPENAI002
+```
+
+**Come funziona:**
+1. 🎙️ Il client si connette via WebSocket
+2. 🗣️ Il giocatore **parla** al Game Master
+3. 🔊 Il Game Master **risponde a voce**
+4. 🎲 Stesse regole, stesse prove, ma a voce!
+
+> Endpoint: `GET /realtime/session` → info di connessione WebSocket
+
+---
+
 # 🛠️ DevUI — Debug Interattivo
 
 ### L'arma segreta per lo sviluppo di agenti!
@@ -331,30 +437,32 @@ public class GameState
 ### Giochiamo insieme al Gioco dell'Oca! 🎲
 
 **Cosa vedremo:**
-1. 🚀 Avvio dell'app e apertura DevUI
+1. 🚀 Avvio dell'app + Dashboard Aspire
 2. 🧑 Registrazione del giocatore umano
 3. 🎲 Lancio del dado e navigazione del tabellone
 4. 🐶 Handoff al Dog Agent → immagine cane da API
 5. 😂 Handoff al Joke Agent → barzelletta + HITL
-6. 🎲 Handoff al Bonus Agent → sfida + HITL
-7. 🏆 Classifica finale
+6. ⚖️ Game Master chiama l'Arbitro (Agent-as-a-Tool)
+7. 📊 Trace nella dashboard Aspire
+8. 🏆 Classifica finale
 
 > `http://localhost:5150/devui`
 
 ---
 
-# 📊 Recap — Cosa Abbiamo Visto
+# 📊 Recap — Le 6 Feature Dimostrate
 
-| Feature Framework | Come la usiamo |
-|---|---|
-| `AddAIAgent()` | 7 agenti con istruzioni in italiano 🇮🇹 |
-| `WithAITool()` | 6 API pubbliche come Function Tools 🔧 |
-| `CreateHandoffBuilderWith()` | Workflow Handoff bi-direzionale 🔄 |
-| `AddWorkflow().AddAsAIAgent()` | Workflow esposto come singolo agente 📦 |
-| `AddDevUI()` + `MapDevUI()` | Debug interattivo via browser 🛠️ |
-| `AddOpenAIResponses()` | Endpoint OpenAI-compatibile 🤖 |
-| HITL via Chat | Giocatore umano prende decisioni 🧑 |
-| `ConcurrentDictionary` | Multi-player thread-safe 👥 |
+| # | Feature | Come la usiamo |
+|---|---|---|
+| 1️⃣ | **Workflow Handoff** | `AgentWorkflowBuilder` → 8 agenti orchestrati 🔄 |
+| 2️⃣ | **Context Windows** | `SlidingWindowCompactionStrategy` per la storia 🧠 |
+| 3️⃣ | **Aspire Log AI** | OpenTelemetry → Dashboard Aspire 📊 |
+| 4️⃣ | **Agent-as-a-Tool** | `arbitroAgent.AsAIFunction()` → tool del GM ⚖️ |
+| 5️⃣ | **Cosmos DB** | `WithCosmosDBChatHistoryProvider` 💾 |
+| 6️⃣ | **GPT Realtime** | `StartConversationSessionAsync()` 🎤 |
+| | **HITL** | Giocatore umano prende decisioni 🧑 |
+| | **Function Tools** | 6 API pubbliche + RollDice 🔧 |
+| | **DevUI** | Debug interattivo via browser 🛠️ |
 
 ---
 
