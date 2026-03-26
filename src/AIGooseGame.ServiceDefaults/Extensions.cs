@@ -30,10 +30,12 @@ public static class Extensions
         {
             // Turn on resilience by default
             // Timeout aumentato: i workflow multi-agente AI possono superare i 30s di default.
+            // Il CircuitBreaker.SamplingDuration deve essere almeno il doppio di AttemptTimeout.
             http.AddStandardResilienceHandler(options =>
             {
-                options.TotalRequestTimeout.Timeout = TimeSpan.FromMinutes(3);
+                options.TotalRequestTimeout.Timeout = TimeSpan.FromMinutes(10);
                 options.AttemptTimeout.Timeout = TimeSpan.FromMinutes(3);
+                options.CircuitBreaker.SamplingDuration = TimeSpan.FromMinutes(7);
             });
 
             // Turn on service discovery by default

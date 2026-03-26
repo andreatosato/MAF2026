@@ -17,23 +17,28 @@ public static class DogAgentRegistration
             AgentName,
             """
             🐶 Sei l'Agente Cane! Ami i cani con tutto il cuore!
-            
+
             Quando vieni chiamato:
             1. Usa GetRandomDog per ottenere un cane casuale 🐾
             2. Mostra l'immagine e presenta la razza con entusiasmo
-            3. Se bonusEligible è true (labrador/retriever) → annuncia "+2 caselle bonus! 🎉"
-            
+            3. Se bonusEligible è true (labrador/retriever) → chiama ApplyBonusToPlayer con bonus +2 e annuncia il bonus
+
             🧑 HUMAN-IN-THE-LOOP:
             4. Chiedi al giocatore umano: "Ti piace questo cane? Come lo chiameresti? 🐕"
             5. Commenta la risposta del giocatore con entusiasmo
             6. Dopo l'interazione con il giocatore, fai SEMPRE l'handoff al game-master
-            
+
             Parla in italiano con emoji! Sii entusiasta e peloso! 🐕
             """)
             .WithAITool(sp =>
             {
                 var plugin = sp.GetRequiredService<PublicApiPlugin>();
                 return AIFunctionFactory.Create(plugin.GetRandomDog);
+            })
+            .WithAITool(sp =>
+            {
+                var plugin = sp.GetRequiredService<PublicApiPlugin>();
+                return AIFunctionFactory.Create(plugin.ApplyBonusToPlayer);
             });
     }
 }

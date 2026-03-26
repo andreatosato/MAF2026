@@ -7,6 +7,7 @@ using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.DevUI;
 using Microsoft.Agents.AI.Hosting;
 using Microsoft.Extensions.AI;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Hosting;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -17,23 +18,45 @@ var builder = WebApplication.CreateBuilder(args);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ASPIRE Service Defaults — OpenTelemetry, Health Checks, Resilience
-// ⚠️ Va registrato PRIMA di AddAzureOpenAIClient e BuildServiceProvider
-//    affinché il client Azure OpenAI risolto dal tempSp partecipi alle tracce.
+// ⚠️ Va registrato PRIMA della registrazione AI client
 // ─────────────────────────────────────────────────────────────────────────────
 builder.AddServiceDefaults();
 
-// Azure OpenAI Chat Client — configurato da Aspire tramite connection string "chat"
-builder.AddAzureOpenAIClient("chat");
+// Microsoft Foundry Chat Client — configurato da Aspire tramite Azure AI Inference
+// Registra IChatClient direttamente da DI (pattern Aspire.Azure.AI.Inference)
+builder.AddAzureChatCompletionsClient("chat")
+    .AddChatClient("chat");
 
-// Registra IChatClient come servizio derivato
-builder.Services.AddSingleton<IChatClient>(sp =>
+// AzureOpenAIClient — necessario per MicrosoftLearnPlugin (Responses API + MCP)
+// Registrato manualmente dall'endpoint Foundry (il raw SDK Azure.AI.OpenAI è già nel progetto)
+builder.Services.AddSingleton(sp =>
 {
-    var azureClient = sp.GetRequiredService<AzureOpenAIClient>();
-    return azureClient.GetChatClient("chat").AsIChatClient();
+    var connectionString = sp.GetRequiredService<IConfiguration>().GetConnectionString("chat") ?? "";
+    var endpoint = connectionString.Split(';')
+        .Select(p => p.Split('=', 2))
+        .Where(p => p.Length == 2 && p[0].Equals("Endpoint", StringComparison.OrdinalIgnoreCase))
+        .Select(p => p[1].TrimEnd('/'))
+        .FirstOrDefault() ?? throw new InvalidOperationException("Missing 'Endpoint' in 'chat' connection string.");
+    return new AzureOpenAIClient(new Uri(endpoint), new Azure.Identity.DefaultAzureCredential());
 });
 
-// L'estensione ora risolve da DI internamente
-builder.AddGooseGameAgents("chat");
+builder.Services.AddAntiforgery();
+
+// Registra GameState e i plugin come servizi DI
+builder.Services.AddSingleton<GameState>();
+builder.Services.AddHttpClient<PublicApiPlugin>();
+builder.Services.AddSingleton<MicrosoftLearnPlugin>(sp =>
+{
+    var azureClient = sp.GetRequiredService<AzureOpenAIClient>();
+    return new MicrosoftLearnPlugin(azureClient, "chat");
+});
+
+// L'estensione ora risolve tutto da DI internamente
+builder.AddGooseGameAgents();
+
+// Razor Components (Blazor Server)
+builder.Services.AddRazorComponents()
+    .AddInteractiveServerComponents();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // OpenAI Responses + Conversations + DevUI
@@ -80,7 +103,7 @@ app.MapDevUI();
 
 // ─── REST Endpoints Gioco dell'Oca ────────────────────────────────────────────
 
-app.MapPost("/game/join/{playerName}", (string playerName, GameState gameState, bool? isHuman) =>
+app.MapPost("/game/join/{playerName}", (string playerName, [FromServices] GameState gameState, bool? isHuman) =>
 {
     var player = gameState.JoinGame(playerName, isHuman ?? false);
     var type = player.IsHuman ? "🧑 Giocatore Umano" : "🤖 Giocatore AI";
@@ -94,7 +117,7 @@ app.MapPost("/game/join/{playerName}", (string playerName, GameState gameState, 
 .WithName("JoinGame")
 .WithSummary("Entra nella partita del Gioco dell'Oca");
 
-app.MapGet("/game/scoreboard", (GameState gameState) =>
+app.MapGet("/game/scoreboard", ([FromServices] GameState gameState) =>
 {
     var scoreboard = gameState.GetScoreboard();
     return Results.Ok(new
@@ -114,6 +137,16 @@ app.MapGet("/game/scoreboard", (GameState gameState) =>
 })
 .WithName("GetScoreboard")
 .WithSummary("Ottieni la classifica corrente");
+
+app.MapGet("/game/player/{playerName}", (string playerName, [FromServices] GameState gameState) =>
+{
+    var player = gameState.GetPlayer(playerName);
+    return player is null
+        ? Results.NotFound(new { error = $"Giocatore '{playerName}' non trovato" })
+        : Results.Ok(new { player.Name, player.Position, player.TurnsPlayed, player.HasFinished });
+})
+.WithName("GetPlayer")
+.WithSummary("Ottieni lo stato di un giocatore");
 
 // ─── Startup Info ─────────────────────────────────────────────────────────────
 

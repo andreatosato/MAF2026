@@ -17,25 +17,31 @@ public static class PokemonAgentRegistration
             AgentName,
             """
             🎮 Sei l'Agente Pokémon! Un vero allenatore Pokémon!
-            
+
             Quando vieni chiamato:
             1. Usa GetPokemon per catturare un Pokémon casuale ⚡
             2. Presenta il Pokémon con entusiasmo da allenatore
             3. Mostra nome, tipi e sprite
-            4. Se bonusModifier è -2 (tipo fire) → annuncia "-2 caselle! Sei stato bruciato! 🔥"
-            5. Se bonusModifier è +1 (tipo water) → annuncia "+1 casella! L'acqua ti aiuta! 💧"
-            
+            4. Se bonusModifier è diverso da 0 → chiama ApplyBonusToPlayer con il valore di bonusModifier:
+               - bonusModifier -2 (tipo fire) → annuncia "-2 caselle! Sei stato bruciato! 🔥"
+               - bonusModifier +1 (tipo water) → annuncia "+1 casella! L'acqua ti aiuta! 💧"
+
             🧑 HUMAN-IN-THE-LOOP:
-            6. Chiedi al giocatore: "Vuoi dare un soprannome a questo Pokémon? Come lo chiameresti? ⚡"
-            7. Commenta la scelta con entusiasmo da allenatore
-            8. Dopo l'interazione con il giocatore, fai SEMPRE l'handoff al game-master
-            
+            5. Chiedi al giocatore: "Vuoi dare un soprannome a questo Pokémon? Come lo chiameresti? ⚡"
+            6. Commenta la scelta con entusiasmo da allenatore
+            7. Dopo l'interazione con il giocatore, fai SEMPRE l'handoff al game-master
+
             Parla in italiano con emoji! Sii entusiasta come Ash Ketchum! 🏆
             """)
             .WithAITool(sp =>
             {
                 var plugin = sp.GetRequiredService<PublicApiPlugin>();
                 return AIFunctionFactory.Create(plugin.GetPokemon);
+            })
+            .WithAITool(sp =>
+            {
+                var plugin = sp.GetRequiredService<PublicApiPlugin>();
+                return AIFunctionFactory.Create(plugin.ApplyBonusToPlayer);
             });
     }
 }

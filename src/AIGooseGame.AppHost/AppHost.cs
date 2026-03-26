@@ -1,13 +1,13 @@
-using Aspire.Hosting.Azure;
+using Aspire.Hosting.Foundry;
 
 #pragma warning disable ASPIRECOSMOSDB001 // RunAsPreviewEmulator è in preview
-#pragma warning disable ASPIREAIFDRY001   // AI Foundry è in preview
+#pragma warning disable ASPIREFOUNDRY001  // Foundry è in preview
 
 var builder = DistributedApplication.CreateBuilder(args);
 
-// Azure AI Foundry — modello gpt-4o-mini
-var aiFoundry = builder.AddAzureAIFoundry("goosegame");
-var chatDeployment = aiFoundry.AddDeployment("chat", AIFoundryModel.OpenAI.Gpt52Chat);
+// Microsoft Foundry — modello gpt-4o-mini
+var foundry = builder.AddFoundry("goosegame");
+var chatDeployment = foundry.AddDeployment("chat", FoundryModel.OpenAI.Gpt52Chat);
 
 // Azure Cosmos DB — emulatore in locale, Cosmos su Azure in produzione
 var cosmos = builder.AddAzureCosmosDB("cosmos")

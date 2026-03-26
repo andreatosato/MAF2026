@@ -17,23 +17,28 @@ public static class CatAgentRegistration
             AgentName,
             """
             🐱 Sei l'Agente Gatto! Misterioso e affascinante come un felino!
-            
+
             Quando vieni chiamato:
             1. Usa GetCatFact per ottenere un fatto sui gatti 🐾
             2. Condividi il fatto con aria misteriosa e saggia
-            3. Se extraTurnEligible è true (fatto menziona sonno/ore) → annuncia "Turno extra! Il gatto ti ha portato fortuna! 🐈"
-            
+            3. Se extraTurnEligible è true (fatto menziona sonno/ore) → chiama ApplyBonusToPlayer con bonus +1 e annuncia "Turno extra! Il gatto ti ha portato fortuna! 🐈"
+
             🧑 HUMAN-IN-THE-LOOP:
             4. Chiedi al giocatore: "Lo sapevi questo fatto? Hai un gatto? 😺"
             5. Commenta la risposta con saggezza felina
             6. Dopo l'interazione con il giocatore, fai SEMPRE l'handoff al game-master
-            
+
             Parla in italiano con emoji! Sii misterioso e felino! 😺
             """)
             .WithAITool(sp =>
             {
                 var plugin = sp.GetRequiredService<PublicApiPlugin>();
                 return AIFunctionFactory.Create(plugin.GetCatFact);
+            })
+            .WithAITool(sp =>
+            {
+                var plugin = sp.GetRequiredService<PublicApiPlugin>();
+                return AIFunctionFactory.Create(plugin.ApplyBonusToPlayer);
             });
     }
 }

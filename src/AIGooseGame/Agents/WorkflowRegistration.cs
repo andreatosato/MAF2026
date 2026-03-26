@@ -13,11 +13,10 @@ public static class WorkflowRegistration
     /// Registra tutti gli agenti del Gioco dell'Oca e configura il workflow handoff
     /// </summary>
     public static void AddGooseGameAgents(
-        this WebApplicationBuilder builder,
-        string deploymentName)
+        this WebApplicationBuilder builder)
     {
         // Registrazione agenti
-        var gameMaster = GameMasterAgentRegistration.Register(builder, deploymentName);
+        var gameMaster = GameMasterAgentRegistration.Register(builder);
         var dogAgent = DogAgentRegistration.Register(builder);
         var jokeAgent = JokeAgentRegistration.Register(builder);
         var catAgent = CatAgentRegistration.Register(builder);

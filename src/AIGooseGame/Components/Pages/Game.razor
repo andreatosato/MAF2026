@@ -254,6 +254,9 @@
                 {
                     _messages.Add(new("assistant", "(Nessuna risposta dall'agente)", "🤖"));
                 }
+
+                // Sincronizza posizione dal server (fonte di verità)
+                await SyncPlayerPosition();
             }
         }
         catch (Exception ex)
@@ -326,16 +329,18 @@
     {
         Regex[] patterns =
         [
+            new(@"\[(\d+)\]", RegexOptions.IgnoreCase),
             new(@"casella\s+(?:numero\s+)?(\d+)", RegexOptions.IgnoreCase),
             new(@"posizione[:\s]+(\d+)", RegexOptions.IgnoreCase),
             new(@"sei\s+(?:ora\s+)?(?:alla|sulla)\s+(?:casella\s+)?(\d+)", RegexOptions.IgnoreCase),
             new(@"avanzi?\s+alla\s+(?:casella\s+)?(\d+)", RegexOptions.IgnoreCase),
+            new(@"newPosition["":\s]+(\d+)", RegexOptions.IgnoreCase),
         ];
 
         foreach (var re in patterns)
         {
             var m = re.Match(text);
-            if (m.Success && int.TryParse(m.Groups[1].Value, out var pos) && pos is >= 0 and <= 20 && pos != _playerPosition)
+            if (m.Success && int.TryParse(m.Groups[1].Value, out var pos) && pos is >= 1 and <= 20 && pos != _playerPosition)
             {
                 _playerPosition = pos;
                 _turnCount++;
@@ -365,6 +370,34 @@
             }
         }
         catch { /* non-critical */ }
+    }
+
+    private async Task SyncPlayerPosition()
+    {
+        try
+        {
+            using var client = CreateClient();
+            var data = await client.GetFromJsonAsync<JsonElement>(
+                $"/game/player/{Uri.EscapeDataString(_playerName)}");
+
+            if (data.TryGetProperty("position", out var posProp))
+            {
+                var serverPos = posProp.GetInt32();
+                if (serverPos > _playerPosition)
+                {
+                    _playerPosition = serverPos;
+                }
+            }
+            if (data.TryGetProperty("turnsPlayed", out var turnsProp))
+            {
+                var serverTurns = turnsProp.GetInt32();
+                if (serverTurns > _turnCount)
+                {
+                    _turnCount = serverTurns;
+                }
+            }
+        }
+        catch { /* non-critical: il server potrebbe non avere ancora il giocatore */ }
     }
 
     public void Dispose() => _scoreboardTimer?.Dispose();

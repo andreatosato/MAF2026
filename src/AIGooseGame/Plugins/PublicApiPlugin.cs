@@ -8,14 +8,88 @@ namespace AIGooseGame.Plugins;
 /// Plugin con tutte le chiamate alle API pubbliche (NO auth!) 🌐
 /// e il lancio del dado per il Gioco dell'Oca 🎲
 /// </summary>
-public class PublicApiPlugin(HttpClient httpClient)
+public class PublicApiPlugin(HttpClient httpClient, GameState gameState)
 {
     private static readonly Random _random = Random.Shared;
 
     // ─── 🎲 Dado ───────────────────────────────────────────────────────────────
 
-    [Description("Lancia il dado e restituisce un numero da 1 a 6")]
-    public int RollDice() => _random.Next(1, 7);
+    [Description("Lancia il dado per un giocatore, muove la pedina sul tabellone e restituisce il risultato JSON con: diceValue, newPosition, squareType, finished, playerName.")]
+    public string RollDice([Description("Nome del giocatore che lancia il dado")] string playerName)
+    {
+        var dice = _random.Next(1, 7);
+
+        var player = gameState.GetPlayer(playerName);
+        if (player is null)
+        {
+            // Fallback: giocatore non trovato, restituisci solo il dado
+            return JsonSerializer.Serialize(new { diceValue = dice, newPosition = -1, squareType = "unknown", finished = false, playerName, error = "Giocatore non trovato nel GameState" });
+        }
+
+        var (updated, finished) = gameState.MovePlayer(playerName, dice);
+        var squareType = gameState.GetSquareType(updated.Position);
+
+        return JsonSerializer.Serialize(new
+        {
+            diceValue = dice,
+            newPosition = updated.Position,
+            squareType,
+            finished,
+            playerName = updated.Name
+        });
+    }
+
+    // ─── 📊 Stato giocatore ────────────────────────────────────────────────────
+
+    [Description("Ottieni lo stato attuale del giocatore: posizione corrente, tipo di casella, turni giocati e se ha finito il gioco.")]
+    public string GetPlayerStatus([Description("Nome del giocatore")] string playerName)
+    {
+        var player = gameState.GetPlayer(playerName);
+        if (player is null)
+        {
+            return JsonSerializer.Serialize(new { error = "Giocatore non trovato", playerName });
+        }
+
+        return JsonSerializer.Serialize(new
+        {
+            playerName = player.Name,
+            position = player.Position,
+            squareType = gameState.GetSquareType(player.Position),
+            turnsPlayed = player.TurnsPlayed,
+            hasFinished = player.HasFinished
+        });
+    }
+
+    // ─── 🎁 Bonus/Malus ────────────────────────────────────────────────────────
+
+    [Description("Applica un bonus o malus alla posizione del giocatore sul tabellone. " +
+                 "Bonus positivo = avanza, negativo = arretra. " +
+                 "Restituisce JSON con posizione precedente, bonus applicato, nuova posizione e tipo casella. " +
+                 "DEVI chiamare questo tool OGNI volta che un giocatore guadagna o perde caselle!")]
+    public string ApplyBonusToPlayer(
+        [Description("Nome del giocatore")] string playerName,
+        [Description("Valore del bonus/malus (es: 2, -1, 3, -2)")] int bonus)
+    {
+        var player = gameState.GetPlayer(playerName);
+        if (player is null)
+        {
+            return JsonSerializer.Serialize(new { error = "Giocatore non trovato", playerName, bonus });
+        }
+
+        var previousPosition = player.Position;
+        var updated = gameState.ApplyBonus(playerName, bonus);
+        var squareType = gameState.GetSquareType(updated.Position);
+
+        return JsonSerializer.Serialize(new
+        {
+            playerName = updated.Name,
+            previousPosition,
+            bonus,
+            newPosition = updated.Position,
+            squareType,
+            finished = updated.HasFinished
+        });
+    }
 
     // ─── 🐶 Dog CEO API ────────────────────────────────────────────────────────
 
