@@ -1,8 +1,6 @@
-using Azure.AI.OpenAI;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting;
 using Microsoft.Agents.AI.Workflows;
-using Microsoft.Extensions.AI;
 
 namespace AIGooseGame.Agents;
 
@@ -16,18 +14,17 @@ public static class WorkflowRegistration
     /// </summary>
     public static void AddGooseGameAgents(
         this WebApplicationBuilder builder,
-        IChatClient chatClient,
-        AzureOpenAIClient azureClient,
         string deploymentName)
     {
         // Registrazione agenti
-        var gameMaster = GameMasterAgentRegistration.Register(builder, chatClient, azureClient, deploymentName);
-        var dogAgent = DogAgentRegistration.Register(builder, chatClient);
-        var jokeAgent = JokeAgentRegistration.Register(builder, chatClient);
-        var catAgent = CatAgentRegistration.Register(builder, chatClient);
-        var cocktailAgent = CocktailAgentRegistration.Register(builder, chatClient);
-        var pokemonAgent = PokemonAgentRegistration.Register(builder, chatClient);
-        var bonusAgent = BonusAgentRegistration.Register(builder, chatClient);
+        var gameMaster = GameMasterAgentRegistration.Register(builder, deploymentName);
+        var dogAgent = DogAgentRegistration.Register(builder);
+        var jokeAgent = JokeAgentRegistration.Register(builder);
+        var catAgent = CatAgentRegistration.Register(builder);
+        var cocktailAgent = CocktailAgentRegistration.Register(builder);
+        var pokemonAgent = PokemonAgentRegistration.Register(builder);
+        var bonusAgent = BonusAgentRegistration.Register(builder);
+        var quizAgent = QuizAgentRegistration.Register(builder);
 
         // ─────────────────────────────────────────────────────────────────────
         // 1️⃣ Workflow Handoff 🔄
@@ -42,12 +39,20 @@ public static class WorkflowRegistration
             var cocktail = sp.GetRequiredKeyedService<AIAgent>(cocktailAgent.Name);
             var pokemon = sp.GetRequiredKeyedService<AIAgent>(pokemonAgent.Name);
             var bonus = sp.GetRequiredKeyedService<AIAgent>(bonusAgent.Name);
+            var quiz = sp.GetRequiredKeyedService<AIAgent>(quizAgent.Name);
 
-            return AgentWorkflowBuilder
+            var workflow = AgentWorkflowBuilder
                 .CreateHandoffBuilderWith(gm)
-                .WithHandoffs(gm, [dog, joke, cat, cocktail, pokemon, bonus])
-                .WithHandoffs([dog, joke, cat, cocktail, pokemon, bonus], gm)
+                .WithHandoffs(gm, [dog, joke, cat, cocktail, pokemon, bonus, quiz])
+                .WithHandoffs([dog, joke, cat, cocktail, pokemon, bonus, quiz], gm)
                 .Build();
+
+            // HandoffsWorkflowBuilder.Build() non imposta il nome sul Workflow,
+            // ma AddWorkflow richiede che workflow.Name corrisponda alla chiave.
+            // Il setter è internal → reflection necessaria.
+            typeof(Workflow).GetProperty(nameof(Workflow.Name))!.SetValue(workflow, key);
+
+            return workflow;
         }).AddAsAIAgent();
     }
 }

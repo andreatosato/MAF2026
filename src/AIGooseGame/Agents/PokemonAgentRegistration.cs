@@ -11,7 +11,7 @@ public static class PokemonAgentRegistration
 {
     public const string AgentName = "pokemon-agent";
 
-    public static IHostedAgentBuilder Register(WebApplicationBuilder builder, IChatClient chatClient)
+    public static IHostedAgentBuilder Register(WebApplicationBuilder builder)
     {
         return builder.AddAIAgent(
             AgentName,
@@ -31,8 +31,7 @@ public static class PokemonAgentRegistration
             8. Dopo l'interazione con il giocatore, fai SEMPRE l'handoff al game-master
             
             Parla in italiano con emoji! Sii entusiasta come Ash Ketchum! 🏆
-            """,
-            chatClient)
+            """)
             .WithAITool(sp =>
             {
                 var plugin = sp.GetRequiredService<PublicApiPlugin>();

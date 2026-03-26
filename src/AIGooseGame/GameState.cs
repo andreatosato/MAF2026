@@ -32,14 +32,14 @@ public class GameState
         "cocktail",  // 4 🍹
         "pokemon",   // 5 🎮
         "bonus",     // 6 🎲
-        "dog",       // 7 🐶
+        "quiz",      // 7 📚 MCP Microsoft Learn
         "joke",      // 8 😂
         "cat",       // 9 🐱
         "cocktail",  // 10 🍹
         "pokemon",   // 11 🎮
         "bonus",     // 12 🎲
         "dog",       // 13 🐶
-        "joke",      // 14 😂
+        "quiz",      // 14 📚 MCP Microsoft Learn
         "cat",       // 15 🐱
         "cocktail",  // 16 🍹
         "pokemon",   // 17 🎮

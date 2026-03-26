@@ -23,8 +23,17 @@
     <PackageReference Include="Azure.Identity" Version="1.18.0" />
   </ItemGroup>
 
+  <!-- Copia Pages nell'output di build -->
+  <ItemGroup>
+    <Content Include="wwwroot\**" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\AIGooseGame.ServiceDefaults\AIGooseGame.ServiceDefaults.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="Pages\" />
   </ItemGroup>
 
 </Project>

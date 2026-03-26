@@ -1,0 +1,259 @@
+@page "/responses-demo"
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+@* ─── Header ─── *@
+<header class="site-header">
+    <h1>🤖 Responses API Demo</h1>
+    <div class="header-links">
+        <a href="/">🎲 Gioco</a>
+        <a href="/devui" target="_blank">🛠️ DevUI</a>
+        <a href="/realtime/session" target="_blank">🎤 Realtime</a>
+    </div>
+</header>
+
+<div class="demo-main">
+    <div class="info-box">
+        <h2>📡 OpenAI Responses API</h2>
+        <p>
+            Questa demo usa l'endpoint <code>POST /v1/responses</code> esposto da
+            Microsoft Agent Framework. Puoi interagire con il workflow
+            <code>goose-game</code> o con i singoli agenti.
+            A differenza delle <em>Conversations</em>, le Responses sono <strong>stateless</strong>:
+            ogni richiesta è indipendente.
+        </p>
+    </div>
+
+    <div class="controls">
+        <label>🎯 Modello / Agente</label>
+        <select @bind="_selectedModel">
+            <option value="goose-game">🎲 goose-game (Workflow Completo)</option>
+            <option value="game-master">🎩 game-master (Orchestratore)</option>
+            <option value="quiz-agent">📚 quiz-agent (MCP Microsoft Learn)</option>
+            <option value="dog-agent">🐶 dog-agent</option>
+            <option value="joke-agent">😂 joke-agent</option>
+            <option value="cat-agent">🐱 cat-agent</option>
+            <option value="cocktail-agent">🍹 cocktail-agent</option>
+            <option value="pokemon-agent">🎮 pokemon-agent</option>
+            <option value="bonus-agent">🎲 bonus-agent</option>
+        </select>
+
+        <label>💬 Messaggio</label>
+        <textarea @bind="_userInput" @bind:event="oninput"
+                  placeholder="Scrivi un messaggio... es: 'Ciao! Raccontami una barzelletta!' oppure 'Lancio il dado!'"
+                  @onkeydown="OnTextAreaKeyDown"></textarea>
+
+        <div class="toggle-row">
+            <input type="checkbox" id="streamToggle" @bind="_enableStreaming" />
+            <label for="streamToggle">Abilita streaming (Server-Sent Events)</label>
+        </div>
+        <div class="toggle-row">
+            <input type="checkbox" id="rawToggle" @bind="_showRawJson" />
+            <label for="rawToggle">Mostra JSON request/response</label>
+        </div>
+
+        <div class="btn-row">
+            <button class="btn btn-primary" @onclick="SendRequest" disabled="@_isSending">
+                🚀 Invia Richiesta
+            </button>
+            <button class="btn btn-secondary" @onclick="ClearMessages">🗑️ Pulisci</button>
+        </div>
+    </div>
+
+    <div class="response-area">
+        <h3>📨 Conversazione</h3>
+        <div class="demo-messages" id="demoMessages">
+            @foreach (var msg in _messages)
+            {
+                <div class="demo-msg @msg.CssClass">@msg.Text</div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private string _selectedModel = "goose-game";
+    private string _userInput = "";
+    private bool _enableStreaming;
+    private bool _showRawJson;
+    private bool _isSending;
+    private readonly List<DemoMessage> _messages = [new("In attesa della prima richiesta...", "info")];
+
+    private record DemoMessage(string Text, string CssClass);
+
+    private void OnTextAreaKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+            _ = SendRequest();
+    }
+
+    private async Task SendRequest()
+    {
+        var input = _userInput?.Trim();
+        if (string.IsNullOrEmpty(input) || _isSending) return;
+
+        _isSending = true;
+        _userInput = "";
+
+        // Remove initial placeholder
+        if (_messages.Count == 1 && _messages[0].CssClass == "info")
+            _messages.Clear();
+
+        _messages.Add(new(input, "user"));
+
+        var body = new
+        {
+            model = _selectedModel,
+            input,
+            stream = _enableStreaming,
+            metadata = new { entity_id = _selectedModel }
+        };
+
+        if (_showRawJson)
+            _messages.Add(new($"── REQUEST POST /v1/responses ──\n{JsonSerializer.Serialize(body, new JsonSerializerOptions { WriteIndented = true })}", "info"));
+
+        try
+        {
+            if (_enableStreaming)
+                await SendStreaming(body);
+            else
+                await SendNonStreaming(body);
+        }
+        catch (Exception ex)
+        {
+            _messages.Add(new($"❌ Errore: {ex.Message}", "error"));
+        }
+        finally
+        {
+            _isSending = false;
+            await ScrollMessages();
+        }
+    }
+
+    private async Task SendNonStreaming(object body)
+    {
+        _messages.Add(new("⏳ Elaborazione in corso...", "assistant"));
+        StateHasChanged();
+
+        using var client = CreateClient();
+        var res = await client.PostAsJsonAsync("/v1/responses", body);
+
+        // Remove loading message
+        _messages.RemoveAt(_messages.Count - 1);
+
+        if (!res.IsSuccessStatusCode)
+        {
+            var errText = await res.Content.ReadAsStringAsync();
+            _messages.Add(new($"❌ Errore {(int)res.StatusCode}: {errText}", "error"));
+            return;
+        }
+
+        var data = await res.Content.ReadFromJsonAsync<JsonElement>();
+
+        if (_showRawJson)
+            _messages.Add(new($"── RESPONSE ──\n{JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true })}", "info"));
+
+        var text = ExtractOutputText(data);
+        _messages.Add(new(string.IsNullOrEmpty(text) ? "(Nessun testo nella risposta)" : text,
+                          string.IsNullOrEmpty(text) ? "error" : "assistant"));
+    }
+
+    private async Task SendStreaming(object body)
+    {
+        var streamMsg = new DemoMessage("", "assistant");
+        _messages.Add(streamMsg);
+        StateHasChanged();
+
+        using var client = CreateClient();
+        var request = new HttpRequestMessage(HttpMethod.Post, "/v1/responses")
+        {
+            Content = JsonContent.Create(body)
+        };
+        var res = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+
+        if (!res.IsSuccessStatusCode)
+        {
+            _messages.Remove(streamMsg);
+            var errText = await res.Content.ReadAsStringAsync();
+            _messages.Add(new($"❌ Errore {(int)res.StatusCode}: {errText}", "error"));
+            return;
+        }
+
+        var fullText = new System.Text.StringBuilder();
+        using var stream = await res.Content.ReadAsStreamAsync();
+        using var reader = new System.IO.StreamReader(stream);
+
+        while (await reader.ReadLineAsync() is { } line)
+        {
+            if (!line.StartsWith("data: ")) continue;
+            var payload = line[6..].Trim();
+            if (payload == "[DONE]") break;
+
+            try
+            {
+                var evt = JsonSerializer.Deserialize<JsonElement>(payload);
+                if (evt.TryGetProperty("type", out var t) && t.GetString() == "response.output_text.delta"
+                    && evt.TryGetProperty("delta", out var delta))
+                {
+                    fullText.Append(delta.GetString());
+                    // Replace the message with accumulated text
+                    _messages[^1] = new(fullText.ToString(), "assistant");
+                    StateHasChanged();
+                    await Task.Delay(10);
+                }
+            }
+            catch { /* skip malformed events */ }
+        }
+
+        if (fullText.Length == 0)
+        {
+            _messages[^1] = new("(Streaming completato senza testo)", "error");
+        }
+    }
+
+    private void ClearMessages()
+    {
+        _messages.Clear();
+        _messages.Add(new("In attesa della prima richiesta...", "info"));
+    }
+
+    private HttpClient CreateClient()
+    {
+        var client = HttpClientFactory.CreateClient();
+        client.BaseAddress = new Uri(Nav.BaseUri);
+        return client;
+    }
+
+    private async Task ScrollMessages()
+    {
+        StateHasChanged();
+        await Task.Delay(50);
+        await JS.InvokeVoidAsync("scrollToBottom", "demoMessages");
+    }
+
+    private static string ExtractOutputText(JsonElement data)
+    {
+        var sb = new System.Text.StringBuilder();
+        if (data.TryGetProperty("output", out var output))
+        {
+            foreach (var item in output.EnumerateArray())
+            {
+                if (item.TryGetProperty("type", out var t) && t.GetString() == "message"
+                    && item.TryGetProperty("content", out var content))
+                {
+                    foreach (var part in content.EnumerateArray())
+                    {
+                        if (part.TryGetProperty("type", out var pt) && pt.GetString() == "output_text"
+                            && part.TryGetProperty("text", out var txt))
+                        {
+                            if (sb.Length > 0) sb.AppendLine();
+                            sb.Append(txt.GetString());
+                        }
+                    }
+                }
+            }
+        }
+        return sb.ToString();
+    }
+}

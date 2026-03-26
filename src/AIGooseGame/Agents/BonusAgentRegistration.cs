@@ -11,7 +11,7 @@ public static class BonusAgentRegistration
 {
     public const string AgentName = "bonus-agent";
 
-    public static IHostedAgentBuilder Register(WebApplicationBuilder builder, IChatClient chatClient)
+    public static IHostedAgentBuilder Register(WebApplicationBuilder builder)
     {
         return builder.AddAIAgent(
             AgentName,
@@ -30,8 +30,7 @@ public static class BonusAgentRegistration
             7. Dopo la risposta del giocatore, fai SEMPRE l'handoff al game-master
             
             Parla in italiano con emoji! Sii motivante come un coach sportivo! 💥
-            """,
-            chatClient)
+            """)
             .WithAITool(sp =>
             {
                 var plugin = sp.GetRequiredService<PublicApiPlugin>();

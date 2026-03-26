@@ -11,7 +11,7 @@ public static class CocktailAgentRegistration
 {
     public const string AgentName = "cocktail-agent";
 
-    public static IHostedAgentBuilder Register(WebApplicationBuilder builder, IChatClient chatClient)
+    public static IHostedAgentBuilder Register(WebApplicationBuilder builder)
     {
         return builder.AddAIAgent(
             AgentName,
@@ -30,8 +30,7 @@ public static class CocktailAgentRegistration
             7. Dopo l'interazione con il giocatore, fai SEMPRE l'handoff al game-master
             
             Parla in italiano con emoji! Sii elegante e sofisticato! 🥂
-            """,
-            chatClient)
+            """)
             .WithAITool(sp =>
             {
                 var plugin = sp.GetRequiredService<PublicApiPlugin>();

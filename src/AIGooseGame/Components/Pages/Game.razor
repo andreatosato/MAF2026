@@ -1,0 +1,371 @@
+@page "/"
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@implements IDisposable
+
+@* ─── Welcome Overlay ─── *@
+@if (!_gameStarted)
+{
+    <div class="welcome-overlay">
+        <div class="welcome-card">
+            <h2>🎲 AI Gioco dell'Oca</h2>
+            <p>
+                Un gioco da tavolo virtuale con <strong>agenti AI specializzati</strong>!<br />
+                Lancia il dado, affronta le prove e raggiungi la casella 20! 🏆
+            </p>
+            <p style="font-size:0.85rem; color: var(--gold);">
+                Costruito con <strong>Microsoft Agent Framework</strong> + <strong>Blazor</strong>
+            </p>
+            <input type="text" @bind="_playerNameInput" @bind:event="oninput"
+                   placeholder="Il tuo nome..." maxlength="20"
+                   @onkeydown="OnWelcomeKeyDown" />
+            <button @onclick="StartGame">🎮 Inizia a Giocare!</button>
+        </div>
+    </div>
+}
+
+@* ─── Header ─── *@
+<header class="site-header">
+    <h1>🎲 AI Gioco dell'Oca</h1>
+    @if (_gameStarted)
+    {
+        <div class="player-info">
+            <span>🧑 @_playerName</span>
+            <span class="position-badge">📍 @_playerPosition</span>
+            <span class="badge">Turno @_turnCount</span>
+        </div>
+    }
+    <div class="header-links">
+        <a href="/responses-demo">🤖 API Demo</a>
+        <a href="/devui" target="_blank">🛠️ DevUI</a>
+        <a href="/game/scoreboard" target="_blank">🏆 API</a>
+    </div>
+</header>
+
+@* ─── Main ─── *@
+<div class="game-main">
+    @* Board *@
+    <div class="board-panel">
+        <div class="board-title">🗺️ Tabellone</div>
+        <div class="board-grid">
+            @foreach (var sq in Board)
+            {
+                var css = sq.Type;
+                if (sq.Pos < _playerPosition) css += " visited";
+                if (sq.Pos == _playerPosition) css += " current";
+
+                <div class="square @css">
+                    <span class="emoji">@sq.Emoji</span>
+                    <span class="num">@sq.Label</span>
+                </div>
+            }
+        </div>
+        <div class="scoreboard">
+            <h3>🏆 Classifica</h3>
+            @if (_scoreboard.Count == 0)
+            {
+                <span style="color:var(--muted);font-size:0.8rem;">In attesa di giocatori...</span>
+            }
+            else
+            {
+                @foreach (var p in _scoreboard)
+                {
+                    <div class="score-row">
+                        <span>@(p.IsHuman ? "🧑" : "🤖") @p.Name</span>
+                        <span>📍@p.Position/20</span>
+                    </div>
+                }
+            }
+        </div>
+    </div>
+
+    @* Chat *@
+    <div class="chat-panel">
+        <div class="chat-messages" id="chatMessages">
+            @foreach (var msg in _messages)
+            {
+                <div class="msg @msg.Role">
+                    @if (msg.Role == "assistant" && !string.IsNullOrEmpty(msg.AgentName))
+                    {
+                        <span class="agent-name">@msg.AgentName</span>
+                    }
+                    @((MarkupString)msg.HtmlContent)
+                </div>
+            }
+            @if (_isSending)
+            {
+                <div class="typing-indicator">🤖 L'agente sta pensando...</div>
+            }
+        </div>
+
+        @if (_gameStarted)
+        {
+            <div class="quick-actions">
+                <button class="quick-btn" @onclick='() => DoSend("lancio")' disabled="@_isSending">🎲 Lancio!</button>
+                <button class="quick-btn" @onclick='() => DoSend("sì")' disabled="@_isSending">✅ Sì</button>
+                <button class="quick-btn" @onclick='() => DoSend("no")' disabled="@_isSending">❌ No</button>
+                <button class="quick-btn" @onclick='() => DoSend("regole")' disabled="@_isSending">📖 Regole</button>
+            </div>
+        }
+
+        <div class="chat-input-area">
+            <input type="text" @bind="_chatInput" @bind:event="oninput"
+                   placeholder="Scrivi 'lancio' per tirare il dado..."
+                   disabled="@(!_gameStarted || _isSending)"
+                   @onkeydown="OnChatKeyDown" />
+            <button class="send-btn" @onclick="SendFromInput"
+                    disabled="@(!_gameStarted || _isSending)">
+                Invia 🚀
+            </button>
+        </div>
+    </div>
+</div>
+
+@code {
+    // ─── State ───
+    private string _playerNameInput = "";
+    private string _playerName = "";
+    private string _chatInput = "";
+    private int _playerPosition;
+    private int _turnCount;
+    private bool _gameStarted;
+    private bool _isSending;
+    private string? _previousResponseId;
+    private readonly List<ChatMessage> _messages = [new("system", "🎲 Benvenuto nel Gioco dell'Oca AI!\nInserisci il tuo nome per iniziare la partita.")];
+    private List<ScoreEntry> _scoreboard = [];
+    private Timer? _scoreboardTimer;
+
+    // ─── Board definition
+    private record BoardSquare(int Pos, string Type, string Emoji, string Label);
+
+    private static readonly BoardSquare[] Board =
+    [
+        new(0,  "start",    "🏁", "START"),
+        new(1,  "dog",      "🐶", "1"),
+        new(2,  "joke",     "😂", "2"),
+        new(3,  "cat",      "🐱", "3"),
+        new(4,  "cocktail", "🍹", "4"),
+        new(5,  "pokemon",  "🎮", "5"),
+        new(6,  "bonus",    "🎲", "6"),
+        new(7,  "quiz",     "📚", "7"),
+        new(8,  "joke",     "😂", "8"),
+        new(9,  "cat",      "🐱", "9"),
+        new(10, "cocktail", "🍹", "10"),
+        new(11, "pokemon",  "🎮", "11"),
+        new(12, "bonus",    "🎲", "12"),
+        new(13, "dog",      "🐶", "13"),
+        new(14, "quiz",     "📚", "14"),
+        new(15, "cat",      "🐱", "15"),
+        new(16, "cocktail", "🍹", "16"),
+        new(17, "pokemon",  "🎮", "17"),
+        new(18, "bonus",    "🎲", "18"),
+        new(19, "dog",      "🐶", "19"),
+        new(20, "finish",   "🏆", "FINE"),
+    ];
+
+    // ─── Records ───
+    private record ChatMessage(string Role, string Text, string? AgentName = null)
+    {
+        public string HtmlContent => System.Net.WebUtility.HtmlEncode(Text);
+    }
+
+    private record ScoreEntry(string Name, int Position, bool IsHuman);
+
+    // ─── Lifecycle ───
+    private void OnWelcomeKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") _ = StartGame();
+    }
+
+    private void OnChatKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") _ = SendFromInput();
+    }
+
+    private async Task StartGame()
+    {
+        _playerName = string.IsNullOrWhiteSpace(_playerNameInput) ? "Giocatore" : _playerNameInput.Trim();
+        _gameStarted = true;
+
+        using var client = CreateClient();
+        try
+        {
+            await client.PostAsync($"/game/join/{Uri.EscapeDataString(_playerName)}?isHuman=true", null);
+        }
+        catch { /* non-critical */ }
+
+        AddSystem($"🎉 {_playerName} è entrato nel gioco!");
+        await DoSend($"Ciao! Sono {_playerName} e voglio giocare al Gioco dell'Oca! 🎲");
+
+        _scoreboardTimer = new Timer(async _ => await RefreshScoreboard(), null, TimeSpan.Zero, TimeSpan.FromSeconds(15));
+    }
+
+    private Task SendFromInput()
+    {
+        var text = _chatInput?.Trim();
+        if (!string.IsNullOrEmpty(text))
+        {
+            _chatInput = "";
+            return DoSend(text);
+        }
+        return Task.CompletedTask;
+    }
+
+    private async Task DoSend(string message)
+    {
+        if (_isSending) return;
+        _isSending = true;
+        _messages.Add(new("user", message));
+        await ScrollChat();
+
+        try
+        {
+            using var client = CreateClient();
+            var body = new Dictionary<string, object>
+            {
+                ["model"] = "goose-game",
+                ["input"] = message,
+                ["metadata"] = new Dictionary<string, string> { ["entity_id"] = "goose-game" }
+            };
+            if (_previousResponseId is not null) body["previous_response_id"] = _previousResponseId;
+
+            var res = await client.PostAsJsonAsync("/v1/responses", body);
+
+            if (!res.IsSuccessStatusCode)
+            {
+                var errText = await res.Content.ReadAsStringAsync();
+                AddSystem($"⚠️ Errore HTTP {(int)res.StatusCode}: {errText[..Math.Min(200, errText.Length)]}");
+            }
+            else
+            {
+                var data = await res.Content.ReadFromJsonAsync<JsonElement>();
+                if (data.TryGetProperty("id", out var idProp))
+                    _previousResponseId = idProp.GetString();
+
+                var agentText = ExtractOutputText(data);
+                if (!string.IsNullOrEmpty(agentText))
+                {
+                    var agentName = DetectAgent(agentText);
+                    _messages.Add(new("assistant", agentText, agentName));
+                    TryUpdatePosition(agentText);
+                }
+                else
+                {
+                    _messages.Add(new("assistant", "(Nessuna risposta dall'agente)", "🤖"));
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            AddSystem($"⚠️ Errore: {ex.Message}");
+        }
+        finally
+        {
+            _isSending = false;
+            await ScrollChat();
+        }
+    }
+
+    // ─── Helpers ───
+    private HttpClient CreateClient()
+    {
+        var client = HttpClientFactory.CreateClient();
+        client.BaseAddress = new Uri(Nav.BaseUri);
+        return client;
+    }
+
+    private void AddSystem(string text) => _messages.Add(new("system", text));
+
+    private async Task ScrollChat()
+    {
+        StateHasChanged();
+        await Task.Delay(50);
+        await JS.InvokeVoidAsync("scrollToBottom", "chatMessages");
+    }
+
+    private static string ExtractOutputText(JsonElement data)
+    {
+        var sb = new System.Text.StringBuilder();
+        if (data.TryGetProperty("output", out var output))
+        {
+            foreach (var item in output.EnumerateArray())
+            {
+                if (item.TryGetProperty("type", out var t) && t.GetString() == "message"
+                    && item.TryGetProperty("content", out var content))
+                {
+                    foreach (var part in content.EnumerateArray())
+                    {
+                        if (part.TryGetProperty("type", out var pt) && pt.GetString() == "output_text"
+                            && part.TryGetProperty("text", out var txt))
+                        {
+                            if (sb.Length > 0) sb.AppendLine();
+                            sb.Append(txt.GetString());
+                        }
+                    }
+                }
+            }
+        }
+        return sb.ToString();
+    }
+
+    private static string DetectAgent(string text)
+    {
+        var t = text.ToLowerInvariant();
+        if (t.Contains("🐶") && (t.Contains("cane") || t.Contains("razza") || t.Contains("dog"))) return "🐶 Agente Cane";
+        if (t.Contains("😂") && (t.Contains("barzelletta") || t.Contains("ridere"))) return "😂 Agente Barzellette";
+        if (t.Contains("🐱") && (t.Contains("gatto") || t.Contains("cat") || t.Contains("felino"))) return "🐱 Agente Gatto";
+        if (t.Contains("🍹") && (t.Contains("cocktail") || t.Contains("drink"))) return "🍹 Agente Cocktail";
+        if (t.Contains("🎮") || t.Contains("pokémon") || t.Contains("pokemon")) return "🎮 Agente Pokémon";
+        if (t.Contains("📚") && (t.Contains("quiz") || t.Contains("domanda"))) return "📚 Agente Quiz";
+        if (t.Contains("sfida") && (t.Contains("bonus") || t.Contains("accetti"))) return "🎲 Agente Sfida";
+        return "🎩 Game Master";
+    }
+
+    private void TryUpdatePosition(string text)
+    {
+        Regex[] patterns =
+        [
+            new(@"casella\s+(?:numero\s+)?(\d+)", RegexOptions.IgnoreCase),
+            new(@"posizione[:\s]+(\d+)", RegexOptions.IgnoreCase),
+            new(@"sei\s+(?:ora\s+)?(?:alla|sulla)\s+(?:casella\s+)?(\d+)", RegexOptions.IgnoreCase),
+            new(@"avanzi?\s+alla\s+(?:casella\s+)?(\d+)", RegexOptions.IgnoreCase),
+        ];
+
+        foreach (var re in patterns)
+        {
+            var m = re.Match(text);
+            if (m.Success && int.TryParse(m.Groups[1].Value, out var pos) && pos is >= 0 and <= 20 && pos != _playerPosition)
+            {
+                _playerPosition = pos;
+                _turnCount++;
+                return;
+            }
+        }
+    }
+
+    private async Task RefreshScoreboard()
+    {
+        try
+        {
+            using var client = CreateClient();
+            var data = await client.GetFromJsonAsync<JsonElement>("/game/scoreboard");
+            if (data.TryGetProperty("players", out var players))
+            {
+                var list = new List<ScoreEntry>();
+                foreach (var p in players.EnumerateArray())
+                {
+                    list.Add(new(
+                        p.GetProperty("name").GetString() ?? "?",
+                        p.GetProperty("position").GetInt32(),
+                        p.GetProperty("isHuman").GetBoolean()));
+                }
+                _scoreboard = list;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch { /* non-critical */ }
+    }
+
+    public void Dispose() => _scoreboardTimer?.Dispose();
+}

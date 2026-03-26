@@ -11,7 +11,7 @@ public static class JokeAgentRegistration
 {
     public const string AgentName = "joke-agent";
 
-    public static IHostedAgentBuilder Register(WebApplicationBuilder builder, IChatClient chatClient)
+    public static IHostedAgentBuilder Register(WebApplicationBuilder builder)
     {
         return builder.AddAIAgent(
             AgentName,
@@ -31,8 +31,7 @@ public static class JokeAgentRegistration
             8. Dopo la risposta del giocatore, fai SEMPRE l'handoff al game-master
             
             Parla in italiano con emoji! Sii comico e teatrale! 🎪
-            """,
-            chatClient)
+            """)
             .WithAITool(sp =>
             {
                 var plugin = sp.GetRequiredService<PublicApiPlugin>();

@@ -29,7 +29,12 @@ public static class Extensions
         builder.Services.ConfigureHttpClientDefaults(http =>
         {
             // Turn on resilience by default
-            http.AddStandardResilienceHandler();
+            // Timeout aumentato: i workflow multi-agente AI possono superare i 30s di default.
+            http.AddStandardResilienceHandler(options =>
+            {
+                options.TotalRequestTimeout.Timeout = TimeSpan.FromMinutes(3);
+                options.AttemptTimeout.Timeout = TimeSpan.FromMinutes(3);
+            });
 
             // Turn on service discovery by default
             http.AddServiceDiscovery();
@@ -62,6 +67,8 @@ public static class Extensions
             .WithTracing(tracing =>
             {
                 tracing.AddSource(builder.Environment.ApplicationName)
+                    .AddSource("Azure.*")
+                    .AddSource("OpenAI.*")
                     .AddAspNetCoreInstrumentation(tracing =>
                         // Exclude health check requests from tracing
                         tracing.Filter = context =>

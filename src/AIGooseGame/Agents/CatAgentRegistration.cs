@@ -11,7 +11,7 @@ public static class CatAgentRegistration
 {
     public const string AgentName = "cat-agent";
 
-    public static IHostedAgentBuilder Register(WebApplicationBuilder builder, IChatClient chatClient)
+    public static IHostedAgentBuilder Register(WebApplicationBuilder builder)
     {
         return builder.AddAIAgent(
             AgentName,
@@ -29,8 +29,7 @@ public static class CatAgentRegistration
             6. Dopo l'interazione con il giocatore, fai SEMPRE l'handoff al game-master
             
             Parla in italiano con emoji! Sii misterioso e felino! 😺
-            """,
-            chatClient)
+            """)
             .WithAITool(sp =>
             {
                 var plugin = sp.GetRequiredService<PublicApiPlugin>();
