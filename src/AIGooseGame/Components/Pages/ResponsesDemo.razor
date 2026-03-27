@@ -1,259 +1,383 @@
 @page "/responses-demo"
+@using System.Text
+@using System.Text.Json
 @inject IHttpClientFactory HttpClientFactory
 @inject NavigationManager Nav
 @inject IJSRuntime JS
+@implements IDisposable
 
 @* ─── Header ─── *@
 <header class="site-header">
-    <h1>🤖 Responses API Demo</h1>
+    <h1>📡 Responses API — SSE Inspector</h1>
     <div class="header-links">
         <a href="/">🎲 Gioco</a>
         <a href="/devui" target="_blank">🛠️ DevUI</a>
-        <a href="/realtime/session" target="_blank">🎤 Realtime</a>
     </div>
 </header>
 
-<div class="demo-main">
-    <div class="info-box">
-        <h2>📡 OpenAI Responses API</h2>
-        <p>
-            Questa demo usa l'endpoint <code>POST /v1/responses</code> esposto da
-            Microsoft Agent Framework. Puoi interagire con il workflow
-            <code>goose-game</code> o con i singoli agenti.
-            A differenza delle <em>Conversations</em>, le Responses sono <strong>stateless</strong>:
-            ogni richiesta è indipendente.
-        </p>
-    </div>
-
-    <div class="controls">
-        <label>🎯 Modello / Agente</label>
-        <select @bind="_selectedModel">
-            <option value="goose-game">🎲 goose-game (Workflow Completo)</option>
-            <option value="game-master">🎩 game-master (Orchestratore)</option>
-            <option value="quiz-agent">📚 quiz-agent (MCP Microsoft Learn)</option>
-            <option value="dog-agent">🐶 dog-agent</option>
-            <option value="joke-agent">😂 joke-agent</option>
-            <option value="cat-agent">🐱 cat-agent</option>
-            <option value="cocktail-agent">🍹 cocktail-agent</option>
-            <option value="pokemon-agent">🎮 pokemon-agent</option>
-            <option value="bonus-agent">🎲 bonus-agent</option>
-        </select>
-
-        <label>💬 Messaggio</label>
-        <textarea @bind="_userInput" @bind:event="oninput"
-                  placeholder="Scrivi un messaggio... es: 'Ciao! Raccontami una barzelletta!' oppure 'Lancio il dado!'"
-                  @onkeydown="OnTextAreaKeyDown"></textarea>
-
-        <div class="toggle-row">
-            <input type="checkbox" id="streamToggle" @bind="_enableStreaming" />
-            <label for="streamToggle">Abilita streaming (Server-Sent Events)</label>
-        </div>
-        <div class="toggle-row">
-            <input type="checkbox" id="rawToggle" @bind="_showRawJson" />
-            <label for="rawToggle">Mostra JSON request/response</label>
-        </div>
-
-        <div class="btn-row">
-            <button class="btn btn-primary" @onclick="SendRequest" disabled="@_isSending">
-                🚀 Invia Richiesta
-            </button>
-            <button class="btn btn-secondary" @onclick="ClearMessages">🗑️ Pulisci</button>
-        </div>
-    </div>
-
-    <div class="response-area">
-        <h3>📨 Conversazione</h3>
-        <div class="demo-messages" id="demoMessages">
-            @foreach (var msg in _messages)
+@* ─── Info Bar: endpoint + previous_response_id chain ─── *@
+<div class="resp-infobar">
+    <div class="resp-infobar-left">
+        <code class="resp-endpoint">POST /v1/responses</code>
+        <span class="resp-sep">·</span>
+        <span class="resp-chain-label">response chain:</span>
+        @if (_responseChain.Count == 0)
+        {
+            <span class="resp-chain-empty">nessuna sessione attiva</span>
+        }
+        else
+        {
+            @for (var i = 0; i < _responseChain.Count; i++)
             {
-                <div class="demo-msg @msg.CssClass">@msg.Text</div>
+                var id = _responseChain[i];
+                var isCurrent = i == _responseChain.Count - 1;
+                <span class="resp-chain-id @(isCurrent ? "current" : "")">@id[..16]…</span>
+                @if (i < _responseChain.Count - 1)
+                {
+                    <span class="resp-chain-arrow">→</span>
+                }
+            }
+        }
+    </div>
+    <button class="resp-reset-btn" @onclick="ResetSession" title="Azzera la sessione: il prossimo messaggio non userà previous_response_id">
+        🔄 Nuova Sessione
+    </button>
+</div>
+
+@* ─── Main: chat + event stream ─── *@
+<div class="resp-main">
+
+    @* Left: Conversazione pulita *@
+    <div class="resp-chat-panel">
+        <div class="resp-panel-title">💬 Conversazione</div>
+        <div class="resp-chat-messages" id="chatArea">
+            @foreach (var msg in _chatMessages)
+            {
+                <div class="resp-chat-msg @msg.Role">
+                    @if (msg.Role == "assistant")
+                    {
+                        <span class="resp-chat-badge">🤖</span>
+                    }
+                    else if (msg.Role == "user")
+                    {
+                        <span class="resp-chat-badge">🧑</span>
+                    }
+                    @((MarkupString)msg.HtmlText)
+                </div>
+            }
+            @if (_isStreaming && _streamingText.Length > 0)
+            {
+                <div class="resp-chat-msg assistant streaming">
+                    <span class="resp-chat-badge">🤖</span>
+                    @_streamingText<span class="resp-cursor">▋</span>
+                </div>
+            }
+            @if (_isStreaming && _streamingText.Length == 0)
+            {
+                <div class="resp-chat-msg assistant">
+                    <span class="resp-chat-badge">🤖</span>
+                    <span class="resp-thinking">elaborazione in corso…</span>
+                </div>
             }
         </div>
     </div>
+
+    @* Right: SSE Event Stream *@
+    <div class="resp-events-panel">
+        <div class="resp-panel-title">
+            📡 SSE Event Stream
+            <span class="resp-events-count">@_events.Count eventi</span>
+        </div>
+        <div class="resp-events-list" id="eventsArea">
+            @if (_events.Count == 0)
+            {
+                <div class="resp-events-placeholder">
+                    Gli eventi SSE appariranno qui in tempo reale.<br/>
+                    Ogni <code>data: {…}</code> del protocollo è un evento.
+                </div>
+            }
+            @foreach (var ev in _events)
+            {
+                <div class="resp-evt @ev.CssClass">
+                    <span class="resp-evt-type">@ev.EventType</span>
+                    @if (!string.IsNullOrEmpty(ev.Detail))
+                    {
+                        <span class="resp-evt-detail">@ev.Detail</span>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+
+</div>
+
+@* ─── Bottom: controlli input ─── *@
+<div class="resp-bottom-bar">
+    <select class="resp-model-select" @bind="_selectedModel" disabled="@_isStreaming">
+        <option value="game-master">🎩 game-master</option>
+        <option value="goose-game">🎲 goose-game (workflow)</option>
+        <option value="challenge-agent">🎯 challenge-agent</option>
+        <option value="prison-agent">🔒 prison-agent</option>
+        <option value="score-agent">📊 score-agent</option>
+    </select>
+    <input class="resp-input" type="text" @bind="_userInput" @bind:event="oninput"
+           placeholder="Scrivi un messaggio e guarda gli eventi SSE arrivare..."
+           disabled="@_isStreaming"
+           @onkeydown="OnKeyDown" />
+    <button class="resp-send-btn" @onclick="SendRequest" disabled="@_isStreaming">
+        @(_isStreaming ? "⏳" : "🚀") Invia
+    </button>
 </div>
 
 @code {
-    private string _selectedModel = "goose-game";
-    private string _userInput = "";
-    private bool _enableStreaming;
-    private bool _showRawJson;
-    private bool _isSending;
-    private readonly List<DemoMessage> _messages = [new("In attesa della prima richiesta...", "info")];
+    // ─── State ───────────────────────────────────────────────────────────────
+    private string _selectedModel = "game-master";
+    private string _userInput    = "";
+    private bool   _isStreaming;
+    private string _streamingText = "";
 
-    private record DemoMessage(string Text, string CssClass);
+    // previous_response_id: il SERVER mantiene la cronologia,
+    // il client manda solo l'ultimo messaggio
+    private string?      _currentResponseId;
+    private readonly List<string>      _responseChain = [];
+    private readonly List<ChatMsg>     _chatMessages  = [];
+    private readonly List<SseEvent>    _events        = [];
 
-    private void OnTextAreaKeyDown(KeyboardEventArgs e)
+    // ─── Records ─────────────────────────────────────────────────────────────
+    private record ChatMsg(string Role, string RawText)
     {
-        if (e.Key == "Enter" && !e.ShiftKey)
+        public string HtmlText =>
+            System.Net.WebUtility.HtmlEncode(RawText).Replace("\n", "<br/>");
+    }
+
+    private record SseEvent(string EventType, string Detail, string CssClass);
+
+    // ─── Lifecycle ───────────────────────────────────────────────────────────
+    private void OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !_isStreaming)
             _ = SendRequest();
     }
 
+    private void ResetSession()
+    {
+        _currentResponseId = null;
+        _responseChain.Clear();
+        _chatMessages.Clear();
+        _events.Clear();
+        _streamingText = "";
+    }
+
+    // ─── Request ─────────────────────────────────────────────────────────────
     private async Task SendRequest()
     {
         var input = _userInput?.Trim();
-        if (string.IsNullOrEmpty(input) || _isSending) return;
+        if (string.IsNullOrEmpty(input) || _isStreaming) return;
 
-        _isSending = true;
-        _userInput = "";
+        _userInput      = "";
+        _isStreaming    = true;
+        _streamingText  = "";
+        _events.Clear();
+        _chatMessages.Add(new("user", input));
+        StateHasChanged();
 
-        // Remove initial placeholder
-        if (_messages.Count == 1 && _messages[0].CssClass == "info")
-            _messages.Clear();
-
-        _messages.Add(new(input, "user"));
-
-        var body = new
+        // ── Corpo della request ──────────────────────────────────────────────
+        // previous_response_id è il cuore delle Responses API:
+        // il server ricostruisce tutta la conversazione da solo,
+        // il client manda solo l'ultimo turno.
+        var body = new Dictionary<string, object?>
         {
-            model = _selectedModel,
-            input,
-            stream = _enableStreaming,
-            metadata = new { entity_id = _selectedModel }
+            ["model"]  = _selectedModel,
+            ["agent"]  = new Dictionary<string, string> { ["name"] = _selectedModel, ["type"] = "agent_reference" },
+            ["input"]  = input,
+            ["stream"] = true,
         };
+        if (_currentResponseId is not null)
+            body["previous_response_id"] = _currentResponseId;
 
-        if (_showRawJson)
-            _messages.Add(new($"── REQUEST POST /v1/responses ──\n{JsonSerializer.Serialize(body, new JsonSerializerOptions { WriteIndented = true })}", "info"));
+        AddEvent("→ REQUEST",
+            $"model={_selectedModel}" +
+            (_currentResponseId is not null
+                ? $"  previous_response_id={_currentResponseId[..16]}…"
+                : "  (nuova sessione, nessun previous_response_id)"),
+            "resp-evt-req");
 
         try
         {
-            if (_enableStreaming)
-                await SendStreaming(body);
+            using var client  = CreateClient();
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/responses")
+            {
+                Content = JsonContent.Create(body)
+            };
+
+            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var err = await response.Content.ReadAsStringAsync();
+                AddEvent("error", err[..Math.Min(120, err.Length)], "resp-evt-error");
+                _chatMessages.Add(new("error", $"Errore HTTP {(int)response.StatusCode}"));
+                return;
+            }
+
+            var fullText = new StringBuilder();
+            using var stream = await response.Content.ReadAsStreamAsync();
+            using var reader = new StreamReader(stream);
+
+            while (await reader.ReadLineAsync() is { } line)
+            {
+                if (!line.StartsWith("data: ")) continue;
+
+                var payload = line[6..].Trim();
+
+                if (payload == "[DONE]")
+                {
+                    AddEvent("[DONE]", "stream completato", "resp-evt-done");
+                    break;
+                }
+
+                try   { ProcessSseEvent(payload, fullText); }
+                catch { /* skip malformed events */ }
+
+                await Task.Delay(8);
+                await InvokeAsync(StateHasChanged);
+                await JS.InvokeVoidAsync("scrollToBottom", "eventsArea");
+            }
+
+            // Committing the final text to chat
+            var finalText = fullText.ToString();
+            if (!string.IsNullOrEmpty(finalText))
+                _chatMessages.Add(new("assistant", finalText));
             else
-                await SendNonStreaming(body);
+                _chatMessages.Add(new("assistant", "(risposta senza testo di output)"));
         }
         catch (Exception ex)
         {
-            _messages.Add(new($"❌ Errore: {ex.Message}", "error"));
+            AddEvent("exception", ex.Message, "resp-evt-error");
         }
         finally
         {
-            _isSending = false;
-            await ScrollMessages();
+            _isStreaming   = false;
+            _streamingText = "";
+            StateHasChanged();
+            await JS.InvokeVoidAsync("scrollToBottom", "chatArea");
         }
     }
 
-    private async Task SendNonStreaming(object body)
+    // ─── SSE Event Parser ────────────────────────────────────────────────────
+    private void ProcessSseEvent(string json, StringBuilder fullText)
     {
-        _messages.Add(new("⏳ Elaborazione in corso...", "assistant"));
-        StateHasChanged();
+        var evt = JsonSerializer.Deserialize<JsonElement>(json);
+        if (!evt.TryGetProperty("type", out var typeProp)) return;
+        var type = typeProp.GetString() ?? "unknown";
 
-        using var client = CreateClient();
-        var res = await client.PostAsJsonAsync("/v1/responses", body);
-
-        // Remove loading message
-        _messages.RemoveAt(_messages.Count - 1);
-
-        if (!res.IsSuccessStatusCode)
+        switch (type)
         {
-            var errText = await res.Content.ReadAsStringAsync();
-            _messages.Add(new($"❌ Errore {(int)res.StatusCode}: {errText}", "error"));
-            return;
-        }
-
-        var data = await res.Content.ReadFromJsonAsync<JsonElement>();
-
-        if (_showRawJson)
-            _messages.Add(new($"── RESPONSE ──\n{JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true })}", "info"));
-
-        var text = ExtractOutputText(data);
-        _messages.Add(new(string.IsNullOrEmpty(text) ? "(Nessun testo nella risposta)" : text,
-                          string.IsNullOrEmpty(text) ? "error" : "assistant"));
-    }
-
-    private async Task SendStreaming(object body)
-    {
-        var streamMsg = new DemoMessage("", "assistant");
-        _messages.Add(streamMsg);
-        StateHasChanged();
-
-        using var client = CreateClient();
-        var request = new HttpRequestMessage(HttpMethod.Post, "/v1/responses")
-        {
-            Content = JsonContent.Create(body)
-        };
-        var res = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
-
-        if (!res.IsSuccessStatusCode)
-        {
-            _messages.Remove(streamMsg);
-            var errText = await res.Content.ReadAsStringAsync();
-            _messages.Add(new($"❌ Errore {(int)res.StatusCode}: {errText}", "error"));
-            return;
-        }
-
-        var fullText = new System.Text.StringBuilder();
-        using var stream = await res.Content.ReadAsStreamAsync();
-        using var reader = new System.IO.StreamReader(stream);
-
-        while (await reader.ReadLineAsync() is { } line)
-        {
-            if (!line.StartsWith("data: ")) continue;
-            var payload = line[6..].Trim();
-            if (payload == "[DONE]") break;
-
-            try
-            {
-                var evt = JsonSerializer.Deserialize<JsonElement>(payload);
-                if (evt.TryGetProperty("type", out var t) && t.GetString() == "response.output_text.delta"
-                    && evt.TryGetProperty("delta", out var delta))
+            // ── Lifecycle ──────────────────────────────────────────────────
+            case "response.created":
+                if (evt.TryGetProperty("response", out var r) &&
+                    r.TryGetProperty("id", out var rid))
                 {
-                    fullText.Append(delta.GetString());
-                    // Replace the message with accumulated text
-                    _messages[^1] = new(fullText.ToString(), "assistant");
-                    StateHasChanged();
-                    await Task.Delay(10);
+                    _currentResponseId = rid.GetString();
+                    if (_currentResponseId is not null)
+                        _responseChain.Add(_currentResponseId);
                 }
-            }
-            catch { /* skip malformed events */ }
-        }
+                AddEvent(type, $"id={_currentResponseId?[..16]}…", "resp-evt-meta");
+                break;
 
-        if (fullText.Length == 0)
-        {
-            _messages[^1] = new("(Streaming completato senza testo)", "error");
+            case "response.in_progress":
+                AddEvent(type, "", "resp-evt-meta");
+                break;
+
+            // ── Output item aperto ─────────────────────────────────────────
+            case "response.output_item.added":
+                var iType = "";
+                if (evt.TryGetProperty("item", out var item))
+                {
+                    item.TryGetProperty("type", out var itp);
+                    iType = itp.GetString() ?? "";
+                    // Se è una function call, mostra il nome
+                    if (iType == "function_call" && item.TryGetProperty("name", out var fn))
+                        iType += $"  name={fn.GetString()}";
+                }
+                AddEvent(type, $"item.type={iType}", "resp-evt-meta");
+                break;
+
+            case "response.content_part.added":
+                AddEvent(type, "", "resp-evt-meta");
+                break;
+
+            // ── Text streaming ─────────────────────────────────────────────
+            case "response.output_text.delta":
+                if (evt.TryGetProperty("delta", out var delta))
+                {
+                    var chunk = delta.GetString() ?? "";
+                    fullText.Append(chunk);
+                    _streamingText = fullText.ToString();
+                    // Mostra solo delta con contenuto (evita spam di singoli caratteri)
+                    if (chunk.Length > 2 || chunk is "\n" or " ")
+                        AddEvent(type, $"\"{Truncate(chunk, 45)}\"", "resp-evt-text");
+                }
+                break;
+
+            case "response.output_text.done":
+                var totalChars = evt.TryGetProperty("text", out var doneText)
+                    ? doneText.GetString()?.Length ?? 0 : 0;
+                AddEvent(type, $"{totalChars} caratteri totali", "resp-evt-text-done");
+                break;
+
+            // ── Tool call (function call) streaming ────────────────────────
+            case "response.function_call_arguments.delta":
+                if (evt.TryGetProperty("delta", out var argDelta))
+                    AddEvent(type, Truncate(argDelta.GetString() ?? "", 55), "resp-evt-tool");
+                break;
+
+            case "response.function_call_arguments.done":
+                var args = evt.TryGetProperty("arguments", out var a) ? a.GetString() ?? "" : "";
+                AddEvent(type, Truncate(args, 80), "resp-evt-tool-done");
+                break;
+
+            // ── Output item chiuso ─────────────────────────────────────────
+            case "response.output_item.done":
+                AddEvent(type, "", "resp-evt-meta");
+                break;
+
+            case "response.content_part.done":
+                AddEvent(type, "", "resp-evt-meta");
+                break;
+
+            // ── Completamento ──────────────────────────────────────────────
+            case "response.completed":
+                var usageInfo = "";
+                if (evt.TryGetProperty("response", out var completedResp) &&
+                    completedResp.TryGetProperty("usage", out var usage))
+                {
+                    var inp = usage.TryGetProperty("input_tokens",  out var it) ? it.GetInt32() : 0;
+                    var out_ = usage.TryGetProperty("output_tokens", out var ot) ? ot.GetInt32() : 0;
+                    usageInfo = $"input_tokens={inp}  output_tokens={out_}";
+                }
+                AddEvent(type, usageInfo, "resp-evt-completed");
+                break;
+
+            default:
+                AddEvent(type, "", "resp-evt-meta");
+                break;
         }
     }
 
-    private void ClearMessages()
-    {
-        _messages.Clear();
-        _messages.Add(new("In attesa della prima richiesta...", "info"));
-    }
+    // ─── Helpers ─────────────────────────────────────────────────────────────
+    private void AddEvent(string type, string detail, string css)
+        => _events.Add(new(type, detail, css));
+
+    private static string Truncate(string s, int max)
+        => s.Length <= max ? s : s[..max] + "…";
 
     private HttpClient CreateClient()
     {
-        var client = HttpClientFactory.CreateClient();
-        client.BaseAddress = new Uri(Nav.BaseUri);
-        return client;
+        var c = HttpClientFactory.CreateClient();
+        c.BaseAddress = new Uri(Nav.BaseUri);
+        return c;
     }
 
-    private async Task ScrollMessages()
-    {
-        StateHasChanged();
-        await Task.Delay(50);
-        await JS.InvokeVoidAsync("scrollToBottom", "demoMessages");
-    }
-
-    private static string ExtractOutputText(JsonElement data)
-    {
-        var sb = new System.Text.StringBuilder();
-        if (data.TryGetProperty("output", out var output))
-        {
-            foreach (var item in output.EnumerateArray())
-            {
-                if (item.TryGetProperty("type", out var t) && t.GetString() == "message"
-                    && item.TryGetProperty("content", out var content))
-                {
-                    foreach (var part in content.EnumerateArray())
-                    {
-                        if (part.TryGetProperty("type", out var pt) && pt.GetString() == "output_text"
-                            && part.TryGetProperty("text", out var txt))
-                        {
-                            if (sb.Length > 0) sb.AppendLine();
-                            sb.Append(txt.GetString());
-                        }
-                    }
-                }
-            }
-        }
-        return sb.ToString();
-    }
+    public void Dispose() { }
 }

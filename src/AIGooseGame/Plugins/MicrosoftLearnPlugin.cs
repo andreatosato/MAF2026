@@ -1,22 +1,15 @@
 using System.ComponentModel;
 using System.Text.Json;
-using Azure.AI.OpenAI;
-using OpenAI.Responses;
 
 namespace AIGooseGame.Plugins;
 
-#pragma warning disable OPENAI001
-
 /// <summary>
-/// Plugin che usa le OpenAI Responses API con MCP Tool per cercare su Microsoft Learn 📚
-/// Questo è un esempio di integrazione MCP (Model Context Protocol) con il server pubblico
-/// di Microsoft Learn: https://learn.microsoft.com/api/mcp
+/// Plugin che recupera documentazione da Microsoft Learn tramite la Search API pubblica.
+/// Il tool è un puro client HTTP: nessuna chiamata LLM interna.
+/// La generazione del quiz è responsabilità dell'agente (IChatClient via MAF).
 /// </summary>
-public class MicrosoftLearnPlugin
+public class MicrosoftLearnPlugin(HttpClient httpClient)
 {
-    private readonly AzureOpenAIClient _azureClient;
-    private readonly string _deploymentName;
-
     private static readonly string[] DotNetTopics =
     [
         ".NET Aspire distributed applications",
@@ -36,72 +29,44 @@ public class MicrosoftLearnPlugin
         ".NET 10 new features"
     ];
 
-    public MicrosoftLearnPlugin(AzureOpenAIClient azureClient, string deploymentName)
-    {
-        _azureClient = azureClient;
-        _deploymentName = deploymentName;
-    }
-
-    [Description("Cerca su Microsoft Learn tramite MCP Server e genera una domanda quiz su .NET/Azure. " +
-                 "Usa il protocollo MCP (Model Context Protocol) per accedere alla documentazione Microsoft Learn in tempo reale. " +
-                 "Restituisce una domanda con 3 opzioni (A, B, C), la risposta corretta e una spiegazione.")]
-    public async Task<string> SearchAndCreateQuiz()
+    [Description("Cerca su Microsoft Learn documentazione per un argomento .NET/Azure casuale. " +
+                 "Restituisce titolo, descrizione e URL della pagina trovata. " +
+                 "Usa questo contenuto per formulare TU STESSO una domanda quiz in italiano con 3 opzioni (A, B, C).")]
+    public async Task<string> SearchMicrosoftLearn()
     {
         var topic = DotNetTopics[Random.Shared.Next(DotNetTopics.Length)];
 
         try
         {
-            var responsesClient = _azureClient.GetResponsesClient();
+            var encoded = Uri.EscapeDataString(topic);
+            var json = await httpClient.GetFromJsonAsync<JsonElement>(
+                $"https://learn.microsoft.com/api/search?search={encoded}&locale=en-US&$top=2&facet=category");
 
-            var prompt =
-                $"Cerca su Microsoft Learn informazioni riguardo: \"{topic}\".\n" +
-                "Basandoti su quello che trovi, genera UNA domanda quiz in italiano a risposta multipla.\n\n" +
-                "Rispondi SOLO in formato JSON valido (senza markdown code blocks):\n" +
-                "{\n" +
-                "  \"topic\": \"nome argomento\",\n" +
-                "  \"question\": \"domanda in italiano\",\n" +
-                "  \"options\": {\n" +
-                "    \"A\": \"prima opzione\",\n" +
-                "    \"B\": \"seconda opzione\",\n" +
-                "    \"C\": \"terza opzione\"\n" +
-                "  },\n" +
-                "  \"correct\": \"A\",\n" +
-                "  \"explanation\": \"spiegazione breve in italiano\",\n" +
-                "  \"learnUrl\": \"URL della pagina Microsoft Learn trovata\"\n" +
-                "}";
-
-            var mcpTool = ResponseTool.CreateMcpTool(
-                serverLabel: "microsoft_learn",
-                serverUri: new Uri("https://learn.microsoft.com/api/mcp"));
-
-            var options = new CreateResponseOptions
+            var items = new List<object>();
+            if (json.TryGetProperty("results", out var results))
             {
-                Model = _deploymentName,
-                InputItems = { ResponseItem.CreateUserMessageItem(prompt) },
-                Tools = { mcpTool }
-            };
+                foreach (var item in results.EnumerateArray().Take(2))
+                {
+                    items.Add(new
+                    {
+                        title       = item.TryGetProperty("title",       out var t) ? t.GetString() : topic,
+                        description = item.TryGetProperty("description", out var d) ? d.GetString() : "",
+                        url         = item.TryGetProperty("url",         out var u) ? u.GetString() : "https://learn.microsoft.com"
+                    });
+                }
+            }
 
-            var result = await responsesClient.CreateResponseAsync(options);
-            return result.Value.GetOutputText();
+            return JsonSerializer.Serialize(new { topic, results = items, source = "learn.microsoft.com" });
         }
-        catch (Exception ex)
+        catch
         {
-            // Fallback: genera una domanda statica se il MCP server non è raggiungibile
+            // Restituisce il solo argomento: l'agente può comunque generare una domanda
+            // basandosi sulla sua conoscenza del topic
             return JsonSerializer.Serialize(new
             {
                 topic,
-                question = $"Quale di queste affermazioni su {topic} è corretta?",
-                options = new Dictionary<string, string>
-                {
-                    ["A"] = "È un servizio esclusivamente cloud",
-                    ["B"] = "È una tecnologia open-source di Microsoft",
-                    ["C"] = "È disponibile solo su Windows"
-                },
-                correct = "B",
-                explanation = $"La maggior parte delle tecnologie .NET moderne sono open-source! Visita learn.microsoft.com per scoprire di più su {topic}.",
-                learnUrl = "https://learn.microsoft.com/dotnet/",
-                mcpFallback = true,
-                mcpError = ex.Message
+                results = new[] { new { title = topic, description = (string?)null, url = "https://learn.microsoft.com/dotnet/" } },
+                source  = "fallback"
             });
         }
     }

@@ -16,22 +16,25 @@ Quando crei o modifichi agenti, consulta le istruzioni dell'agente MAF per patte
 - Workflow Handoff per orchestrare gli agenti specializzati
 - DevUI per test e sviluppo
 
-**Agenti del Gioco dell'Oca**:
+**Agenti del Gioco dell'Oca** (nuovo workflow):
 - `GameMasterAgentRegistration` - Orchestratore principale del gioco 🎩
-- `DogAgentRegistration` - Caselle cane (1,13,19) 🐶
-- `JokeAgentRegistration` - Caselle barzelletta (2,8) 😂
-- `CatAgentRegistration` - Caselle gatto (3,9,15) 🐱
-- `CocktailAgentRegistration` - Caselle cocktail (4,10,16) 🍹
-- `PokemonAgentRegistration` - Caselle pokemon (5,11,17) 🎮
-- `BonusAgentRegistration` - Caselle bonus (6,12,18) 🎲
-- `QuizAgentRegistration` - Caselle quiz MCP Microsoft Learn (7,14) 📚
+- `ChallengeAgentRegistration` - Gestisce le prove sulle caselle (usa come tool: Dog, Joke, Cat, Cocktail, Pokemon, Quiz) 🎯
+- `PrisonAgentRegistration` - Gestisce le caselle prigione (fermo N turni) 🔒
+- `ScoreAgentRegistration` - Aggiorna punteggio e passa al giocatore successivo 📊
 - `WorkflowRegistration` - Registrazione workflow handoff
 
+**Workflow Handoff**:
+- Game Master → Challenge Agent (caselle con prova) o Prison Agent (caselle prigione)
+- Challenge Agent → Score Agent
+- Prison Agent → Score Agent
+- Score Agent → Game Master (prossimo turno)
+
 **Comunicazione tra agenti**:
-- Handoff workflow: il Game Master delega agli agenti specializzati
+- Handoff workflow: Game Master → Challenge/Prison → Score → Game Master
 - Agent-as-a-Tool: l'Arbitro è esposto come tool del Game Master
+- Gli ex-agenti (Dog, Joke, Cat, ecc.) sono ora TOOL del Challenge Agent
 - OpenAI Responses + Conversations per endpoint compatibili
-- MCP (Model Context Protocol): il Quiz Agent usa il server MCP di Microsoft Learn per generare quiz
+- MCP (Model Context Protocol): il Challenge Agent usa SearchMicrosoftLearn per quiz
 
 ## Build Commands
 
@@ -51,7 +54,9 @@ Esegui con: `aspire start` o avvia il progetto `AIGooseGame.AppHost`
 
 - Tutti gli agenti parlano in italiano con emoji 🎲
 - Il Game Master è l'orchestratore principale (handoff workflow)
-- Il tabellone ha 20 caselle: START → [1]🐶→[2]😂→[3]🐱→[4]🍹→[5]🎮→[6]🎲→[7]📚→[8]😂→[9]🐱→[10]🍹→[11]🎮→[12]🎲→[13]🐶→[14]📚→[15]🐱→[16]🍹→[17]🎮→[18]🎲→[19]🐶→[20]🏆
-- Human-in-the-loop: il giocatore umano decide quando lanciare il dado
+- Il tabellone è DINAMICO: generato a runtime con caselle casuali (prove + prigione)
+- All'inizio del gioco si selezionano il numero di giocatori (2-4) e la dimensione del tabellone
+- Caselle: 🐶=Cane, 😂=Barzelletta, 🐱=Gatto, 🍹=Cocktail, 🎮=Pokémon, 📚=Quiz, 🔒=Prigione
+- Human-in-the-loop: ogni giocatore decide quando lanciare il dado
 - Azure AI Foundry per i modelli (gpt-4o-mini + gpt-4o-realtime-preview)
 - Cosmos DB emulatore in locale, Azure in produzione

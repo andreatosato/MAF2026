@@ -2,7 +2,6 @@ using AIGooseGame;
 using AIGooseGame.Agents;
 using AIGooseGame.Components;
 using AIGooseGame.Plugins;
-using Azure.AI.OpenAI;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.DevUI;
 using Microsoft.Agents.AI.Hosting;
@@ -27,29 +26,16 @@ builder.AddServiceDefaults();
 builder.AddAzureChatCompletionsClient("chat")
     .AddChatClient("chat");
 
-// AzureOpenAIClient — necessario per MicrosoftLearnPlugin (Responses API + MCP)
-// Registrato manualmente dall'endpoint Foundry (il raw SDK Azure.AI.OpenAI è già nel progetto)
-builder.Services.AddSingleton(sp =>
-{
-    var connectionString = sp.GetRequiredService<IConfiguration>().GetConnectionString("chat") ?? "";
-    var endpoint = connectionString.Split(';')
-        .Select(p => p.Split('=', 2))
-        .Where(p => p.Length == 2 && p[0].Equals("Endpoint", StringComparison.OrdinalIgnoreCase))
-        .Select(p => p[1].TrimEnd('/'))
-        .FirstOrDefault() ?? throw new InvalidOperationException("Missing 'Endpoint' in 'chat' connection string.");
-    return new AzureOpenAIClient(new Uri(endpoint), new Azure.Identity.DefaultAzureCredential());
-});
+// Bridge: Aspire registra IChatClient come servizio default (non-keyed).
+// Gli agenti MAF con chatClientServiceKey: "chat" lo cercano come keyed service.
+builder.Services.AddKeyedSingleton<IChatClient>("chat", (sp, _) => sp.GetRequiredService<IChatClient>());
 
 builder.Services.AddAntiforgery();
 
 // Registra GameState e i plugin come servizi DI
 builder.Services.AddSingleton<GameState>();
 builder.Services.AddHttpClient<PublicApiPlugin>();
-builder.Services.AddSingleton<MicrosoftLearnPlugin>(sp =>
-{
-    var azureClient = sp.GetRequiredService<AzureOpenAIClient>();
-    return new MicrosoftLearnPlugin(azureClient, "chat");
-});
+builder.Services.AddHttpClient<MicrosoftLearnPlugin>();
 
 // L'estensione ora risolve tutto da DI internamente
 builder.AddGooseGameAgents();
@@ -103,6 +89,26 @@ app.MapDevUI();
 
 // ─── REST Endpoints Gioco dell'Oca ────────────────────────────────────────────
 
+app.MapPost("/game/initialize", ([FromServices] GameState gameState, int? size) =>
+{
+    gameState.InitializeBoard(size ?? 20);
+    return Results.Ok(new
+    {
+        message = "🎲 Tabellone generato!",
+        boardSize = gameState.BoardSize,
+        board = gameState.Board.Select(s => new
+        {
+            position = s.Position,
+            type = s.Type.ToString().ToLowerInvariant(),
+            emoji = s.Emoji,
+            label = s.Label
+        }),
+        boardString = gameState.GetBoardString()
+    });
+})
+.WithName("InitializeGame")
+.WithSummary("Inizializza il tabellone dinamico");
+
 app.MapPost("/game/join/{playerName}", (string playerName, [FromServices] GameState gameState, bool? isHuman) =>
 {
     var player = gameState.JoinGame(playerName, isHuman ?? false);
@@ -111,7 +117,7 @@ app.MapPost("/game/join/{playerName}", (string playerName, [FromServices] GameSt
     {
         message = $"🎉 Benvenuto {player.Name}! ({type}) Sei pronto a giocare al Gioco dell'Oca!",
         player,
-        board = $"Tabellone: START → [1]🐶→[2]😂→[3]🐱→[4]🍹→[5]🎮→[6]🎲→[7]📚→[8]😂→...→[14]📚→...→[20]🏆 FINE"
+        board = gameState.IsGameInitialized ? gameState.GetBoardString() : "Tabellone non ancora generato"
     });
 })
 .WithName("JoinGame")
@@ -130,7 +136,8 @@ app.MapGet("/game/scoreboard", ([FromServices] GameState gameState) =>
             position = p.Position,
             turnsPlayed = p.TurnsPlayed,
             hasFinished = p.HasFinished,
-            squareType = GameState.BoardSquares[Math.Min(p.Position, GameState.BoardSize)],
+            squareType = gameState.GetSquareTypeString(p.Position),
+            turnsToSkip = p.TurnsToSkip,
             isHuman = p.IsHuman
         })
     });
@@ -143,10 +150,78 @@ app.MapGet("/game/player/{playerName}", (string playerName, [FromServices] GameS
     var player = gameState.GetPlayer(playerName);
     return player is null
         ? Results.NotFound(new { error = $"Giocatore '{playerName}' non trovato" })
-        : Results.Ok(new { player.Name, player.Position, player.TurnsPlayed, player.HasFinished });
+        : Results.Ok(new { player.Name, player.Position, player.TurnsPlayed, player.HasFinished, player.TurnsToSkip });
 })
 .WithName("GetPlayer")
 .WithSummary("Ottieni lo stato di un giocatore");
+
+app.MapGet("/game/board", ([FromServices] GameState gameState) =>
+{
+    if (!gameState.IsGameInitialized)
+        return Results.Ok(new { initialized = false, board = Array.Empty<object>() });
+
+    return Results.Ok(new
+    {
+        initialized = true,
+        boardSize = gameState.BoardSize,
+        board = gameState.Board.Select(s => new
+        {
+            position = s.Position,
+            type = s.Type.ToString().ToLowerInvariant(),
+            emoji = s.Emoji,
+            label = s.Label
+        })
+    });
+})
+.WithName("GetBoard")
+.WithSummary("Ottieni il tabellone corrente");
+
+app.MapGet("/game/current-player", ([FromServices] GameState gameState) =>
+{
+    var current = gameState.GetCurrentPlayer();
+    return Results.Ok(new
+    {
+        currentPlayer = current?.Name,
+        allPlayers = gameState.GetPlayerOrder()
+    });
+})
+.WithName("GetCurrentPlayer")
+.WithSummary("Ottieni il giocatore di turno");
+
+app.MapPost("/game/apply-bonus", ([FromServices] GameState gameState, [FromQuery] string playerName, [FromQuery] int bonus) =>
+{
+    try
+    {
+        var updated = gameState.ApplyBonus(playerName, bonus);
+        return Results.Ok(new
+        {
+            playerName = updated.Name,
+            bonus,
+            newPosition = updated.Position,
+            hasFinished = updated.HasFinished
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+})
+.WithName("ApplyBonus")
+.WithSummary("Applica bonus/malus direttamente al giocatore");
+
+app.MapPost("/game/advance-turn", ([FromServices] GameState gameState) =>
+{
+    var (next, skipped) = gameState.AdvanceToNextPlayer();
+    return Results.Ok(new
+    {
+        nextPlayer = next?.Name,
+        nextPosition = next?.Position ?? 0,
+        nextIsHuman = next?.IsHuman ?? false,
+        skippedPlayers = skipped
+    });
+})
+.WithName("AdvanceTurn")
+.WithSummary("Avanza al giocatore successivo");
 
 // ─── Startup Info ─────────────────────────────────────────────────────────────
 

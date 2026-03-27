@@ -173,7 +173,24 @@ body {
 .square.pokemon { background: #c0392b; border-color: #e74c3c; }
 .square.bonus { background: #117a65; border-color: #1abc9c; }
 .square.quiz { background: #1f618d; border-color: #3498db; }
+.square.prison { background: #2c2c54; border-color: #706fd3; }
 .square.finish { background: linear-gradient(135deg, #f39c12, #e74c3c); border-color: var(--gold); }
+
+.square.occupied {
+    border-color: #fff !important;
+    box-shadow: 0 0 12px rgba(255, 255, 255, 0.4);
+    transform: scale(1.08);
+    z-index: 2;
+}
+
+.square .player-markers {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    font-size: 0.65rem;
+    display: flex;
+    gap: 1px;
+}
 
 .square.current {
     border-color: #fff !important;
@@ -431,6 +448,54 @@ body {
 }
 
 .welcome-card button:hover { transform: scale(1.02); }
+.welcome-card button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+.setup-section {
+    margin-bottom: 16px;
+    text-align: left;
+}
+
+.setup-section label {
+    display: block;
+    font-size: 0.85rem;
+    color: var(--gold);
+    margin-bottom: 6px;
+    font-weight: 600;
+}
+
+.setup-section select {
+    width: 100%;
+    background: #0f172a;
+    border: 2px solid #334155;
+    color: var(--text);
+    padding: 10px 14px;
+    border-radius: 10px;
+    font-size: 1rem;
+    outline: none;
+    cursor: pointer;
+}
+
+.setup-section select:focus { border-color: var(--gold); }
+
+.turn-indicator {
+    font-size: 0.85rem;
+    color: var(--gold);
+    padding: 4px 12px;
+    background: rgba(245, 166, 35, 0.15);
+    border-radius: 12px;
+    border: 1px solid rgba(245, 166, 35, 0.3);
+}
+
+.position-badge.active {
+    background: rgba(46, 204, 113, 0.2) !important;
+    border-color: var(--green) !important;
+    color: var(--green) !important;
+}
+
+.score-row.current-turn {
+    background: rgba(245, 166, 35, 0.1);
+    border-left: 3px solid var(--gold);
+}
 
 /* ═══════════════════════════════════════════════════════════════════
    RESPONSES DEMO PAGE
@@ -626,4 +691,277 @@ body {
     .square .emoji { font-size: 1.1rem; }
     .scoreboard { display: none; }
     .site-header h1 { font-size: 1rem; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   RESPONSES DEMO — SSE Inspector
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ─── Info bar: endpoint + chain ─── */
+.resp-infobar {
+    background: #11112a;
+    border-bottom: 1px solid #2a2a4a;
+    padding: 8px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    font-size: 0.8rem;
+    flex-shrink: 0;
+}
+
+.resp-infobar-left { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex: 1; }
+
+.resp-endpoint {
+    background: #1e1e3a;
+    color: var(--gold);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.78rem;
+}
+
+.resp-sep       { color: var(--muted); }
+.resp-chain-label { color: var(--muted); }
+.resp-chain-empty { color: #4a4a6a; font-style: italic; }
+
+.resp-chain-id {
+    background: #1e1e3a;
+    border: 1px solid #3a3a5a;
+    color: var(--muted);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 0.72rem;
+    transition: all 0.2s;
+}
+.resp-chain-id.current {
+    border-color: var(--blue);
+    color: var(--blue);
+}
+.resp-chain-arrow { color: var(--muted); font-size: 0.75rem; }
+
+.resp-reset-btn {
+    background: transparent;
+    border: 1px solid #3a3a5a;
+    color: var(--muted);
+    padding: 4px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.78rem;
+    transition: all 0.2s;
+}
+.resp-reset-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ─── Main two-column layout ─── */
+.resp-main {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+    flex: 1;
+    overflow: hidden;
+    height: calc(100vh - 110px);
+}
+
+.resp-chat-panel,
+.resp-events-panel {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border-right: 1px solid #2a2a4a;
+}
+
+.resp-panel-title {
+    background: #14142e;
+    border-bottom: 1px solid #2a2a4a;
+    padding: 8px 16px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+}
+.resp-events-count {
+    font-size: 0.72rem;
+    background: #1e1e3a;
+    padding: 1px 6px;
+    border-radius: 10px;
+}
+
+/* ─── Chat messages ─── */
+.resp-chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.resp-chat-msg {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 10px 14px;
+    border-radius: var(--radius);
+    animation: fadeIn 0.2s ease;
+    font-size: 0.88rem;
+    line-height: 1.5;
+}
+.resp-chat-msg.user      { background: #1a1a3e; border-left: 3px solid var(--blue); margin-left: 20px; }
+.resp-chat-msg.assistant { background: #1a2e1a; border-left: 3px solid var(--green); margin-right: 20px; }
+.resp-chat-msg.error     { background: #2e1a1a; border-left: 3px solid var(--accent); }
+
+.resp-chat-badge  { font-size: 1rem; flex-shrink: 0; }
+.resp-cursor      { animation: pulse 0.8s infinite; color: var(--green); }
+.resp-thinking    { color: var(--muted); font-style: italic; animation: pulse 1s infinite; }
+
+/* ─── SSE event list ─── */
+.resp-events-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 0.72rem;
+}
+
+.resp-events-placeholder {
+    color: #3a3a5a;
+    font-size: 0.8rem;
+    text-align: center;
+    padding: 24px;
+    line-height: 1.6;
+}
+.resp-events-placeholder code { color: #5a5a8a; }
+
+.resp-evt {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    animation: fadeIn 0.1s ease;
+    border-left: 2px solid transparent;
+}
+
+.resp-evt-type {
+    flex-shrink: 0;
+    font-weight: 600;
+    min-width: 280px;
+}
+
+.resp-evt-detail {
+    color: #6a6a8a;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Event type color coding */
+.resp-evt-req        { border-color: var(--purple); background: #1a1a2e; }
+.resp-evt-req        .resp-evt-type { color: var(--purple); }
+
+.resp-evt-meta       { border-color: #2a2a4a; background: transparent; }
+.resp-evt-meta       .resp-evt-type { color: #4a4a7a; }
+.resp-evt-meta       .resp-evt-detail { color: #3a3a5a; }
+
+.resp-evt-text       { border-color: var(--blue); background: #0f1a2e; }
+.resp-evt-text       .resp-evt-type { color: var(--blue); }
+.resp-evt-text       .resp-evt-detail { color: #5a8ab0; }
+
+.resp-evt-text-done  { border-color: #1a5a8a; background: #0a1520; }
+.resp-evt-text-done  .resp-evt-type { color: #5a9abf; }
+
+.resp-evt-tool       { border-color: var(--gold); background: #2a1e00; }
+.resp-evt-tool       .resp-evt-type { color: var(--gold); }
+.resp-evt-tool       .resp-evt-detail { color: #a07a30; }
+
+.resp-evt-tool-done  { border-color: #a07020; background: #1e1500; }
+.resp-evt-tool-done  .resp-evt-type { color: #c09040; }
+.resp-evt-tool-done  .resp-evt-detail { color: #8a6020; }
+
+.resp-evt-done       { border-color: #2a4a2a; background: #0f1e0f; }
+.resp-evt-done       .resp-evt-type { color: #5a8a5a; }
+
+.resp-evt-completed  { border-color: var(--green); background: #0a2a0a; }
+.resp-evt-completed  .resp-evt-type { color: var(--green); font-size: 0.8rem; }
+.resp-evt-completed  .resp-evt-detail { color: #3a8a3a; }
+
+.resp-evt-error      { border-color: var(--accent); background: #2a0a0a; }
+.resp-evt-error      .resp-evt-type { color: var(--accent); }
+
+/* ─── Bottom input bar ─── */
+.resp-bottom-bar {
+    background: #0f0f23;
+    border-top: 2px solid #2a2a4a;
+    padding: 10px 16px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.resp-model-select {
+    background: #1a1a2e;
+    border: 1px solid #3a3a5a;
+    color: var(--text);
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: 0.82rem;
+    cursor: pointer;
+}
+
+.resp-input {
+    flex: 1;
+    background: #1a1a2e;
+    border: 1px solid #3a3a5a;
+    color: var(--text);
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 0.88rem;
+    transition: border-color 0.2s;
+}
+.resp-input:focus   { outline: none; border-color: var(--blue); }
+.resp-input:disabled { opacity: 0.5; }
+
+.resp-send-btn {
+    background: var(--blue);
+    border: none;
+    color: white;
+    padding: 8px 18px;
+    border-radius: 8px;
+    font-size: 0.88rem;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+.resp-send-btn:hover:not(:disabled)    { background: #2980b9; }
+.resp-send-btn:disabled                { opacity: 0.5; cursor: not-allowed; }
+
+@media (max-width: 768px) {
+    .resp-main { grid-template-columns: 1fr; }
+    .resp-events-panel { display: none; }
+}
+
+/* ─── Challenge Cards (Human-in-the-loop) ─── */
+.challenge-card-img {
+    margin: 12px 0;
+    text-align: center;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    border: 2px solid var(--gold);
+    border-radius: var(--radius);
+    padding: 12px;
+    box-shadow: 0 4px 20px rgba(245, 166, 35, 0.25);
+    max-width: 320px;
+}
+.challenge-card-img img {
+    max-width: 100%;
+    max-height: 260px;
+    border-radius: 8px;
+    object-fit: cover;
+    display: block;
+    margin: 0 auto;
 }

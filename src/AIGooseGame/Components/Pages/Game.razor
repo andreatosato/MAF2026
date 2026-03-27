@@ -1,26 +1,86 @@
 @page "/"
+@using System.IO
+@using System.Text
+@using System.Text.Json
 @inject IHttpClientFactory HttpClientFactory
 @inject NavigationManager Nav
 @inject IJSRuntime JS
 @implements IDisposable
 
-@* ─── Welcome Overlay ─── *@
+@* ─── Welcome Overlay: selezione giocatori umani + AI ─── *@
 @if (!_gameStarted)
 {
     <div class="welcome-overlay">
         <div class="welcome-card">
             <h2>🎲 AI Gioco dell'Oca</h2>
             <p>
-                Un gioco da tavolo virtuale con <strong>agenti AI specializzati</strong>!<br />
-                Lancia il dado, affronta le prove e raggiungi la casella 20! 🏆
+                Un gioco da tavolo con <strong>agenti AI specializzati</strong>!<br />
+                Sfida i tuoi amici e i bot AI su un tabellone dinamico! 🏆
             </p>
             <p style="font-size:0.85rem; color: var(--gold);">
                 Costruito con <strong>Microsoft Agent Framework</strong> + <strong>Blazor</strong>
             </p>
-            <input type="text" @bind="_playerNameInput" @bind:event="oninput"
-                   placeholder="Il tuo nome..." maxlength="20"
-                   @onkeydown="OnWelcomeKeyDown" />
-            <button @onclick="StartGame">🎮 Inizia a Giocare!</button>
+
+            <div class="setup-section">
+                <label>🧑 Giocatori umani (1-4):</label>
+                <select @bind="_humanCount">
+                    <option value="1">1 umano</option>
+                    <option value="2">2 umani</option>
+                    <option value="3">3 umani</option>
+                    <option value="4">4 umani</option>
+                </select>
+            </div>
+
+            <div class="setup-section">
+                @for (int i = 0; i < _humanCount; i++)
+                {
+                    var idx = i;
+                    <input type="text" @bind="_humanNames[idx]" @bind:event="oninput"
+                           placeholder="@($"🧑 Nome giocatore {idx + 1}...")" maxlength="20" />
+                }
+            </div>
+
+            <div class="setup-section">
+                <label>🤖 Avversari AI (0-@(4 - _humanCount)):</label>
+                <select @bind="_aiCount">
+                    @for (int n = Math.Max(0, 2 - _humanCount); n <= 4 - _humanCount; n++)
+                    {
+                        var val = n;
+                        <option value="@val">@val bot</option>
+                    }
+                </select>
+            </div>
+
+            @if (_aiCount > 0)
+            {
+                <div class="setup-section" style="font-size:0.85rem; color:var(--muted);">
+                    🤖 Bot AI:
+                    @for (int i = 0; i < _aiCount; i++)
+                    {
+                        <span style="margin-left:6px;">@AiPlayerLabels[i]</span>
+                    }
+                </div>
+            }
+
+            <div class="setup-section">
+                <label>🗺️ Dimensione tabellone:</label>
+                <select @bind="_boardSize">
+                    <option value="15">15 caselle</option>
+                    <option value="20">20 caselle (consigliato)</option>
+                    <option value="25">25 caselle</option>
+                    <option value="30">30 caselle</option>
+                </select>
+            </div>
+
+            <button @onclick="StartGame" disabled="@(_isInitializing || _humanCount + _aiCount < 2)">
+                @(_isInitializing ? "⏳ Preparazione..." : "🎮 Inizia a Giocare!")
+            </button>
+            @if (_humanCount + _aiCount < 2)
+            {
+                <p style="color:var(--accent); font-size:0.8rem; margin-top:8px;">
+                    ⚠️ Servono almeno 2 giocatori in totale!
+                </p>
+            }
         </div>
     </div>
 }
@@ -31,9 +91,16 @@
     @if (_gameStarted)
     {
         <div class="player-info">
-            <span>🧑 @_playerName</span>
-            <span class="position-badge">📍 @_playerPosition</span>
-            <span class="badge">Turno @_turnCount</span>
+            <span class="turn-indicator">
+                🎯 Turno: <strong>@(_aiPlayerNames.Contains(_currentPlayerName) ? "🤖" : "🧑") @_currentPlayerName</strong>
+            </span>
+            @foreach (var p in _scoreboard)
+            {
+                <span class="position-badge @(p.Name == _currentPlayerName ? "active" : "")">
+                    @(p.IsHuman ? "🧑" : "🤖") @p.Name: 📍@p.Position
+                    @if (p.TurnsToSkip > 0) { <text>🔒</text> }
+                </span>
+            }
         </div>
     }
     <div class="header-links">
@@ -47,17 +114,21 @@
 <div class="game-main">
     @* Board *@
     <div class="board-panel">
-        <div class="board-title">🗺️ Tabellone</div>
+        <div class="board-title">🗺️ Tabellone Dinamico</div>
         <div class="board-grid">
-            @foreach (var sq in Board)
+            @foreach (var sq in _boardSquares)
             {
                 var css = sq.Type;
-                if (sq.Pos < _playerPosition) css += " visited";
-                if (sq.Pos == _playerPosition) css += " current";
+                var playerMarkers = GetPlayersOnSquare(sq.Position);
+                if (playerMarkers.Count > 0) css += " occupied";
 
                 <div class="square @css">
                     <span class="emoji">@sq.Emoji</span>
                     <span class="num">@sq.Label</span>
+                    @if (playerMarkers.Count > 0)
+                    {
+                        <span class="player-markers">@string.Join("", playerMarkers)</span>
+                    }
                 </div>
             }
         </div>
@@ -71,9 +142,12 @@
             {
                 @foreach (var p in _scoreboard)
                 {
-                    <div class="score-row">
-                        <span>@(p.IsHuman ? "🧑" : "🤖") @p.Name</span>
-                        <span>📍@p.Position/20</span>
+                    <div class="score-row @(p.Name == _currentPlayerName ? "current-turn" : "")">
+                        <span>
+                            @PlayerMarker(p.Name) @(p.IsHuman ? "🧑" : "🤖") @p.Name
+                            @if (p.TurnsToSkip > 0) { <text> 🔒(@p.TurnsToSkip)</text> }
+                        </span>
+                        <span>📍@p.Position/@_boardSize</span>
                     </div>
                 }
             }
@@ -95,27 +169,39 @@
             }
             @if (_isSending)
             {
-                <div class="typing-indicator">🤖 L'agente sta pensando...</div>
+                <div class="typing-indicator">
+                    @if (_isAutoPlaying)
+                    {
+                        <text>🤖 @_currentPlayerName (bot) sta giocando...</text>
+                    }
+                    else
+                    {
+                        <text>🤖 L'agente sta pensando...</text>
+                    }
+                </div>
             }
         </div>
 
         @if (_gameStarted)
         {
             <div class="quick-actions">
-                <button class="quick-btn" @onclick='() => DoSend("lancio")' disabled="@_isSending">🎲 Lancio!</button>
-                <button class="quick-btn" @onclick='() => DoSend("sì")' disabled="@_isSending">✅ Sì</button>
-                <button class="quick-btn" @onclick='() => DoSend("no")' disabled="@_isSending">❌ No</button>
-                <button class="quick-btn" @onclick='() => DoSend("regole")' disabled="@_isSending">📖 Regole</button>
+                <button class="quick-btn" @onclick='() => DoSend("lancio")' disabled="@(_isSending || _isAutoPlaying)">🎲 Lancio!</button>
+                <button class="quick-btn" @onclick='() => DoSend("sì")' disabled="@(_isSending || _isAutoPlaying)">✅ Sì</button>
+                <button class="quick-btn" @onclick='() => DoSend("no")' disabled="@(_isSending || _isAutoPlaying)">❌ No</button>
+                <button class="quick-btn" @onclick='() => DoSend("A")' disabled="@(_isSending || _isAutoPlaying)">🅰️ A</button>
+                <button class="quick-btn" @onclick='() => DoSend("B")' disabled="@(_isSending || _isAutoPlaying)">🅱️ B</button>
+                <button class="quick-btn" @onclick='() => DoSend("C")' disabled="@(_isSending || _isAutoPlaying)">©️ C</button>
+                <button class="quick-btn" @onclick='() => DoSend("regole")' disabled="@(_isSending || _isAutoPlaying)">📖 Regole</button>
             </div>
         }
 
         <div class="chat-input-area">
             <input type="text" @bind="_chatInput" @bind:event="oninput"
-                   placeholder="Scrivi 'lancio' per tirare il dado..."
-                   disabled="@(!_gameStarted || _isSending)"
+                   placeholder="@(_isAutoPlaying ? "🤖 Il bot sta giocando..." : "Scrivi 'lancio' per tirare il dado...")"
+                   disabled="@(!_gameStarted || _isSending || _isAutoPlaying)"
                    @onkeydown="OnChatKeyDown" />
             <button class="send-btn" @onclick="SendFromInput"
-                    disabled="@(!_gameStarted || _isSending)">
+                    disabled="@(!_gameStarted || _isSending || _isAutoPlaying)">
                 Invia 🚀
             </button>
         </div>
@@ -124,60 +210,71 @@
 
 @code {
     // ─── State ───
-    private string _playerNameInput = "";
-    private string _playerName = "";
+    private int _humanCount = 1;
+    private int _aiCount = 1;
+    private int _boardSize = 20;
+    private string[] _humanNames = ["", "", "", ""];
     private string _chatInput = "";
-    private int _playerPosition;
-    private int _turnCount;
     private bool _gameStarted;
+    private bool _gameFinished;
+    private bool _isInitializing;
     private bool _isSending;
+    private bool _isAutoPlaying;
     private string? _previousResponseId;
-    private readonly List<ChatMessage> _messages = [new("system", "🎲 Benvenuto nel Gioco dell'Oca AI!\nInserisci il tuo nome per iniziare la partita.")];
+    private string _currentPlayerName = "";
+    private readonly HashSet<string> _aiPlayerNames = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<ChatMessage> _messages = [new("system", "🎲 Benvenuto nel Gioco dell'Oca AI!\nSeleziona giocatori umani, avversari AI e dimensione del tabellone.")];
     private List<ScoreEntry> _scoreboard = [];
+    private List<BoardSquareData> _boardSquares = [];
     private Timer? _scoreboardTimer;
 
-    // ─── Board definition
-    private record BoardSquare(int Pos, string Type, string Emoji, string Label);
-
-    private static readonly BoardSquare[] Board =
-    [
-        new(0,  "start",    "🏁", "START"),
-        new(1,  "dog",      "🐶", "1"),
-        new(2,  "joke",     "😂", "2"),
-        new(3,  "cat",      "🐱", "3"),
-        new(4,  "cocktail", "🍹", "4"),
-        new(5,  "pokemon",  "🎮", "5"),
-        new(6,  "bonus",    "🎲", "6"),
-        new(7,  "quiz",     "📚", "7"),
-        new(8,  "joke",     "😂", "8"),
-        new(9,  "cat",      "🐱", "9"),
-        new(10, "cocktail", "🍹", "10"),
-        new(11, "pokemon",  "🎮", "11"),
-        new(12, "bonus",    "🎲", "12"),
-        new(13, "dog",      "🐶", "13"),
-        new(14, "quiz",     "📚", "14"),
-        new(15, "cat",      "🐱", "15"),
-        new(16, "cocktail", "🍹", "16"),
-        new(17, "pokemon",  "🎮", "17"),
-        new(18, "bonus",    "🎲", "18"),
-        new(19, "dog",      "🐶", "19"),
-        new(20, "finish",   "🏆", "FINE"),
-    ];
+    // Nomi e label per i bot AI
+    private static readonly string[] AiPlayerNames = ["Bot-Luna", "Bot-Stella", "Bot-Fuoco"];
+    private static readonly string[] AiPlayerLabels = ["🤖 Bot-Luna 🌙", "🤖 Bot-Stella ⭐", "🤖 Bot-Fuoco 🔥"];
+    private static readonly string[] PlayerMarkers = ["🔴", "🔵", "🟢", "🟡"];
 
     // ─── Records ───
+    private record BoardSquareData(int Position, string Type, string Emoji, string Label);
     private record ChatMessage(string Role, string Text, string? AgentName = null)
     {
-        public string HtmlContent => System.Net.WebUtility.HtmlEncode(Text);
+        public string HtmlContent
+        {
+            get
+            {
+                var escaped = System.Net.WebUtility.HtmlEncode(Text);
+                // Render image URLs as <img> inside a card
+                escaped = System.Text.RegularExpressions.Regex.Replace(
+                    escaped,
+                    @"(https?://\S+\.(?:jpg|jpeg|png|gif|webp)(\?\S*)?)",
+                    """<div class="challenge-card-img"><img src="$1" alt="🎯" onerror="this.parentElement.style.display='none'" /></div>""");
+                // Render **bold** markdown
+                escaped = System.Text.RegularExpressions.Regex.Replace(
+                    escaped, @"\*\*(.+?)\*\*", "<strong>$1</strong>");
+                return escaped;
+            }
+        }
+    }
+    private record ScoreEntry(string Name, int Position, bool IsHuman, int TurnsToSkip = 0, bool HasFinished = false);
+
+    // ─── Helpers ───
+    private string PlayerMarker(string name)
+    {
+        var idx = _scoreboard.FindIndex(p => p.Name == name);
+        return idx >= 0 && idx < PlayerMarkers.Length ? PlayerMarkers[idx] : "⚪";
     }
 
-    private record ScoreEntry(string Name, int Position, bool IsHuman);
+    private List<string> GetPlayersOnSquare(int position)
+    {
+        var markers = new List<string>();
+        foreach (var p in _scoreboard)
+        {
+            if (p.Position == position)
+                markers.Add(PlayerMarker(p.Name));
+        }
+        return markers;
+    }
 
     // ─── Lifecycle ───
-    private void OnWelcomeKeyDown(KeyboardEventArgs e)
-    {
-        if (e.Key == "Enter") _ = StartGame();
-    }
-
     private void OnChatKeyDown(KeyboardEventArgs e)
     {
         if (e.Key == "Enter") _ = SendFromInput();
@@ -185,20 +282,101 @@
 
     private async Task StartGame()
     {
-        _playerName = string.IsNullOrWhiteSpace(_playerNameInput) ? "Giocatore" : _playerNameInput.Trim();
-        _gameStarted = true;
+        _isInitializing = true;
+        StateHasChanged();
 
-        using var client = CreateClient();
         try
         {
-            await client.PostAsync($"/game/join/{Uri.EscapeDataString(_playerName)}?isHuman=true", null);
+            using var client = CreateClient();
+
+            // 1. Inizializza il tabellone
+            await client.PostAsync($"/game/initialize?size={_boardSize}", null);
+
+            // 2. Registra giocatori umani
+            var allPlayerNames = new List<string>();
+            for (int i = 0; i < _humanCount; i++)
+            {
+                var name = string.IsNullOrWhiteSpace(_humanNames[i])
+                    ? $"Giocatore{i + 1}"
+                    : _humanNames[i].Trim();
+                allPlayerNames.Add(name);
+                await client.PostAsync($"/game/join/{Uri.EscapeDataString(name)}?isHuman=true", null);
+            }
+
+            // 3. Registra giocatori AI
+            _aiPlayerNames.Clear();
+            for (int i = 0; i < _aiCount; i++)
+            {
+                var aiName = AiPlayerNames[i];
+                _aiPlayerNames.Add(aiName);
+                allPlayerNames.Add(aiName);
+                await client.PostAsync($"/game/join/{Uri.EscapeDataString(aiName)}?isHuman=false", null);
+            }
+
+            // 4. Carica il tabellone dal server
+            await FetchBoard();
+
+            _currentPlayerName = allPlayerNames[0];
+            _gameStarted = true;
+            _gameFinished = false;
+
+            var humanList = allPlayerNames.Where(n => !_aiPlayerNames.Contains(n)).ToList();
+            var aiList = allPlayerNames.Where(n => _aiPlayerNames.Contains(n)).ToList();
+
+            AddSystem($"🎉 Partita iniziata!");
+            AddSystem($"🧑 Umani: {string.Join(", ", humanList)}");
+            if (aiList.Count > 0)
+                AddSystem($"🤖 Bot AI: {string.Join(", ", aiList)}");
+            AddSystem($"🗺️ Tabellone con {_boardSize} caselle generato!");
+
+            // 5. Messaggio iniziale all'AI
+            var humanDesc = string.Join(", ", humanList.Select(n => $"{n} (umano)"));
+            var aiDesc = aiList.Count > 0 ? string.Join(", ", aiList.Select(n => $"{n} (bot AI)")) : "";
+            var playersDesc = aiDesc.Length > 0 ? $"{humanDesc}, {aiDesc}" : humanDesc;
+
+            var introMessage = $"Ciao! Siamo {allPlayerNames.Count} giocatori: {playersDesc}. " +
+                               $"Il tabellone ha {_boardSize} caselle. Inizia il gioco! 🎲";
+            await DoSend(introMessage);
+
+            // 6. Timer classifica
+            _scoreboardTimer = new Timer(async _ => await RefreshScoreboard(), null, TimeSpan.Zero, TimeSpan.FromSeconds(10));
+
+            // 7. Se il primo giocatore è un bot, avvia auto-play
+            await RunAutoPlayLoop();
+        }
+        catch (Exception ex)
+        {
+            AddSystem($"⚠️ Errore inizializzazione: {ex.Message}");
+        }
+        finally
+        {
+            _isInitializing = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task FetchBoard()
+    {
+        try
+        {
+            using var client = CreateClient();
+            var data = await client.GetFromJsonAsync<JsonElement>("/game/board");
+
+            if (data.TryGetProperty("board", out var board))
+            {
+                _boardSquares.Clear();
+                foreach (var sq in board.EnumerateArray())
+                {
+                    _boardSquares.Add(new(
+                        sq.GetProperty("position").GetInt32(),
+                        sq.GetProperty("type").GetString() ?? "start",
+                        sq.GetProperty("emoji").GetString() ?? "❓",
+                        sq.GetProperty("label").GetString() ?? "?"
+                    ));
+                }
+            }
         }
         catch { /* non-critical */ }
-
-        AddSystem($"🎉 {_playerName} è entrato nel gioco!");
-        await DoSend($"Ciao! Sono {_playerName} e voglio giocare al Gioco dell'Oca! 🎲");
-
-        _scoreboardTimer = new Timer(async _ => await RefreshScoreboard(), null, TimeSpan.Zero, TimeSpan.FromSeconds(15));
     }
 
     private Task SendFromInput()
@@ -212,52 +390,14 @@
         return Task.CompletedTask;
     }
 
+    // ─── Invio messaggio — il workflow gestisce tutto (challenge, prigione, turni) ───
     private async Task DoSend(string message)
     {
         if (_isSending) return;
         _isSending = true;
-        _messages.Add(new("user", message));
-        await ScrollChat();
-
         try
         {
-            using var client = CreateClient();
-            var body = new Dictionary<string, object>
-            {
-                ["model"] = "goose-game",
-                ["input"] = message,
-                ["metadata"] = new Dictionary<string, string> { ["entity_id"] = "goose-game" }
-            };
-            if (_previousResponseId is not null) body["previous_response_id"] = _previousResponseId;
-
-            var res = await client.PostAsJsonAsync("/v1/responses", body);
-
-            if (!res.IsSuccessStatusCode)
-            {
-                var errText = await res.Content.ReadAsStringAsync();
-                AddSystem($"⚠️ Errore HTTP {(int)res.StatusCode}: {errText[..Math.Min(200, errText.Length)]}");
-            }
-            else
-            {
-                var data = await res.Content.ReadFromJsonAsync<JsonElement>();
-                if (data.TryGetProperty("id", out var idProp))
-                    _previousResponseId = idProp.GetString();
-
-                var agentText = ExtractOutputText(data);
-                if (!string.IsNullOrEmpty(agentText))
-                {
-                    var agentName = DetectAgent(agentText);
-                    _messages.Add(new("assistant", agentText, agentName));
-                    TryUpdatePosition(agentText);
-                }
-                else
-                {
-                    _messages.Add(new("assistant", "(Nessuna risposta dall'agente)", "🤖"));
-                }
-
-                // Sincronizza posizione dal server (fonte di verità)
-                await SyncPlayerPosition();
-            }
+            await SendWithHandoffChain(message);
         }
         catch (Exception ex)
         {
@@ -268,6 +408,319 @@
             _isSending = false;
             await ScrollChat();
         }
+        await RunAutoPlayLoop();
+    }
+
+    // ─── Invia messaggio + catena di handoff automatica ───
+    // Il workflow gestisce challenge (2 fasi per umani), prigione e turni.
+    // Il client segue solo gli handoff pendenti e mostra TUTTI i messaggi.
+    private async Task SendWithHandoffChain(string message, bool showUserMessage = true)
+    {
+        int maxChain = 10;
+        var msg = message;
+        bool showMsg = showUserMessage;
+        for (int i = 0; i < maxChain; i++)
+        {
+            var (pendingHandoff, _) = await DoSendInternal(msg, showMsg);
+            if (_gameFinished) break;
+
+            if (pendingHandoff)
+            {
+                AddSystem("🔄 Passaggio all'agente successivo...");
+                await ScrollChat();
+                await Task.Delay(500);
+                msg = "procedi";
+                showMsg = false;
+                continue;
+            }
+
+            break; // Chain completata o agente in attesa di input utente
+        }
+        await SyncGameState();
+    }
+
+    // ─── Invio interno — SSE streaming ───
+    // Mostra TUTTI i messaggi degli agenti senza filtri né soppressione.
+    // Il workflow gestisce autonomamente challenge, prigione e turni.
+    private async Task<(bool pendingHandoff, bool sawTransfer)> DoSendInternal(string message, bool showUserMessage = true)
+    {
+        if (showUserMessage)
+            _messages.Add(new("user", message));
+        await ScrollChat();
+        bool pendingHandoff = false;
+        bool sawTransfer = false;
+
+        try
+        {
+            using var client = CreateClient();
+            client.Timeout = TimeSpan.FromMinutes(5);
+
+            var positionInfo = string.Join(", ", _scoreboard.Select(p =>
+                $"{p.Name}{(p.IsHuman ? "(🧑)" : "(🤖)")}: casella {p.Position}" +
+                (p.TurnsToSkip > 0 ? $" [prigione {p.TurnsToSkip} turni]" : "")));
+
+            var isCurrentAI = _aiPlayerNames.Contains(_currentPlayerName);
+            var playerTypeInstruction = isCurrentAI
+                ? $"""
+                  🤖 IL GIOCATORE DI TURNO '{_currentPlayerName}' È UN BOT AI.
+                  NON aspettare input umano. Completa il turno automaticamente.
+                  Per le prove: scegli una risposta casuale, applica bonus e trasferisci al score-agent.
+                  """
+                : $"""
+                  🧑 IL GIOCATORE DI TURNO '{_currentPlayerName}' È UMANO.
+                  Attendi i suoi input per le prove (human-in-the-loop).
+                  """;
+
+            var body = new Dictionary<string, object>
+            {
+                ["model"] = "goose-game",
+                ["agent"] = new Dictionary<string, string> { ["name"] = "goose-game", ["type"] = "agent_reference" },
+                ["input"] = message,
+                ["stream"] = true,
+                ["instructions"] = $"""
+                    STATO GIOCO: Turno di '{_currentPlayerName}'.
+                    Posizioni: {(string.IsNullOrEmpty(positionInfo) ? "partita appena iniziata" : positionInfo)}
+                    {playerTypeInstruction}
+                    Usa '{_currentPlayerName}' come playerName nei tool.
+                    """
+            };
+            if (_previousResponseId is not null) body["previous_response_id"] = _previousResponseId;
+
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/responses")
+            {
+                Content = JsonContent.Create(body)
+            };
+            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errText = await response.Content.ReadAsStringAsync();
+                AddSystem($"⚠️ Errore HTTP {(int)response.StatusCode}: {errText[..Math.Min(200, errText.Length)]}");
+            }
+            else
+            {
+                // Processa lo stream SSE — mostra TUTTI i messaggi degli agenti
+                var fullText = new StringBuilder();
+                var allTexts = new List<string>();
+                using var stream = await response.Content.ReadAsStreamAsync();
+                using var reader = new StreamReader(stream);
+
+                while (await reader.ReadLineAsync() is { } line)
+                {
+                    if (!line.StartsWith("data: ")) continue;
+                    var payload = line[6..].Trim();
+                    if (payload == "[DONE]") break;
+
+                    try
+                    {
+                        var evt = JsonSerializer.Deserialize<JsonElement>(payload);
+                        if (!evt.TryGetProperty("type", out var typeProp)) continue;
+                        var type = typeProp.GetString() ?? "";
+
+                        switch (type)
+                        {
+                            case "response.created":
+                                if (evt.TryGetProperty("response", out var r) &&
+                                    r.TryGetProperty("id", out var rid))
+                                    _previousResponseId = rid.GetString();
+                                break;
+
+                            case "response.output_text.delta":
+                                if (evt.TryGetProperty("delta", out var delta))
+                                {
+                                    var chunk = delta.GetString() ?? "";
+                                    fullText.Append(chunk);
+                                }
+                                break;
+
+                            case "response.output_text.done":
+                                // Un blocco di testo di un agente è completo.
+                                var agentText = fullText.ToString();
+                                if (string.IsNullOrWhiteSpace(agentText) &&
+                                    evt.TryGetProperty("text", out var doneText))
+                                {
+                                    agentText = doneText.GetString() ?? "";
+                                }
+                                if (!string.IsNullOrWhiteSpace(agentText))
+                                {
+                                    allTexts.Add(agentText);
+                                    pendingHandoff = false;
+                                    var agentName = DetectAgent(agentText);
+                                    _messages.Add(new("assistant", agentText, agentName));
+
+                                    if (agentText.Contains("🏆") && (agentText.Contains("vittoria", StringComparison.OrdinalIgnoreCase)
+                                        || agentText.Contains("vinto", StringComparison.OrdinalIgnoreCase)
+                                        || agentText.Contains("finito", StringComparison.OrdinalIgnoreCase)))
+                                    {
+                                        _gameFinished = true;
+                                    }
+                                }
+                                fullText.Clear();
+                                break;
+
+                            case "response.output_item.added":
+                                if (evt.TryGetProperty("item", out var item) &&
+                                    item.TryGetProperty("type", out var iType))
+                                {
+                                    var itemType = iType.GetString() ?? "";
+                                    if (itemType == "function_call" &&
+                                        item.TryGetProperty("name", out var fnName))
+                                    {
+                                        var funcName = fnName.GetString() ?? "";
+                                        AddSystem($"⚙️ Tool: {funcName}");
+
+                                        if (funcName.StartsWith("transfer_to_"))
+                                        {
+                                            pendingHandoff = true;
+                                            sawTransfer = true;
+                                        }
+                                    }
+                                }
+                                break;
+
+                            case "response.completed":
+                                if (allTexts.Count == 0 && evt.TryGetProperty("response", out var completedResp))
+                                {
+                                    var extracted = ExtractOutputText(completedResp);
+                                    if (!string.IsNullOrWhiteSpace(extracted))
+                                    {
+                                        var name = DetectAgent(extracted);
+                                        _messages.Add(new("assistant", extracted, name));
+                                        allTexts.Add(extracted);
+
+                                        if (extracted.Contains("🏆") && (extracted.Contains("vittoria", StringComparison.OrdinalIgnoreCase)
+                                            || extracted.Contains("vinto", StringComparison.OrdinalIgnoreCase)))
+                                        {
+                                            _gameFinished = true;
+                                        }
+                                    }
+                                }
+                                if (evt.TryGetProperty("response", out var crsp) &&
+                                    crsp.TryGetProperty("id", out var crid))
+                                {
+                                    _previousResponseId = crid.GetString();
+                                }
+                                if (!pendingHandoff && evt.TryGetProperty("response", out var hResp)
+                                    && hResp.TryGetProperty("output", out var hOutput))
+                                {
+                                    foreach (var oi in hOutput.EnumerateArray())
+                                    {
+                                        if (oi.TryGetProperty("type", out var ot)
+                                            && ot.GetString() == "function_call"
+                                            && oi.TryGetProperty("name", out var on)
+                                            && (on.GetString() ?? "").StartsWith("transfer_to_"))
+                                        {
+                                            pendingHandoff = true;
+                                            sawTransfer = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                break;
+                        }
+
+                        await InvokeAsync(StateHasChanged);
+                        await JS.InvokeVoidAsync("scrollToBottom", "chatMessages");
+                    }
+                    catch { /* skip malformed SSE events */ }
+                }
+
+                // Testo rimanente non chiuso da response.output_text.done
+                var remaining = fullText.ToString();
+                if (!string.IsNullOrWhiteSpace(remaining))
+                {
+                    pendingHandoff = false;
+                    allTexts.Add(remaining);
+                    var agentName = DetectAgent(remaining);
+                    _messages.Add(new("assistant", remaining, agentName));
+                }
+
+                if (allTexts.Count == 0)
+                {
+                    _messages.Add(new("assistant", "(Nessuna risposta dall'agente)", "🤖"));
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            AddSystem($"⚠️ Errore: {ex.Message}");
+        }
+        finally
+        {
+            await ScrollChat();
+        }
+
+        return (pendingHandoff, sawTransfer);
+    }
+
+    // ─── Auto-play loop per giocatori AI ───
+    // Quando è il turno di un bot, invia automaticamente "lancio" o una risposta contestuale.
+    // Se il Challenge Agent chiede una domanda (FASE 1 per bot), il bot risponde intelligentemente.
+    private async Task RunAutoPlayLoop()
+    {
+        if (_gameFinished || !_gameStarted) return;
+
+        int maxRounds = 16;
+        int round = 0;
+
+        while (_aiPlayerNames.Contains(_currentPlayerName) && round < maxRounds && !_gameFinished && _gameStarted)
+        {
+            round++;
+            _isAutoPlaying = true;
+            StateHasChanged();
+
+            await Task.Delay(2000);
+
+            var botName = _currentPlayerName;
+            var botMessage = DetermineBotMessage();
+            AddSystem($"🤖 {botName}: {botMessage}");
+            StateHasChanged();
+
+            await SendWithHandoffChain(botMessage, showUserMessage: false);
+
+            if (_gameFinished) break;
+            // _currentPlayerName è aggiornato da SyncGameState in SendWithHandoffChain
+        }
+
+        _isAutoPlaying = false;
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// Determina il messaggio che il bot deve inviare.
+    /// Controlla gli ultimi messaggi degli agenti per trovare domande delle prove
+    /// (che possono essere sepolte sotto messaggi di handoff del GM).
+    /// </summary>
+    private string DetermineBotMessage()
+    {
+        // Cerca nelle ultime 5 risposte degli agenti (la domanda può essere più indietro
+        // a causa dei messaggi di handoff del GM che si accumulano)
+        var recentAssistants = _messages
+            .Where(m => m.Role == "assistant")
+            .TakeLast(5)
+            .Reverse(); // più recenti prima
+
+        foreach (var msg in recentAssistants)
+        {
+            var text = msg.Text;
+            if (!text.Contains('?')) continue;
+
+            // Quiz con opzioni A, B, C
+            if (text.Contains("A, B o C", StringComparison.OrdinalIgnoreCase)
+                || (text.Contains("A)") && text.Contains("B)")))
+                return "B";
+
+            // Qualsiasi domanda della prova (cane, gatto, cocktail, barzelletta, pokémon)
+            if (text.Contains("chiameresti", StringComparison.OrdinalIgnoreCase)
+                || text.Contains("ordineresti", StringComparison.OrdinalIgnoreCase)
+                || text.Contains("sapevi", StringComparison.OrdinalIgnoreCase)
+                || text.Contains("piace", StringComparison.OrdinalIgnoreCase)
+                || text.Contains("ridere", StringComparison.OrdinalIgnoreCase)
+                || text.Contains("SÌ o NO", StringComparison.OrdinalIgnoreCase))
+                return "sì";
+        }
+
+        return "lancio";
     }
 
     // ─── Helpers ───
@@ -315,89 +768,64 @@
     private static string DetectAgent(string text)
     {
         var t = text.ToLowerInvariant();
-        if (t.Contains("🐶") && (t.Contains("cane") || t.Contains("razza") || t.Contains("dog"))) return "🐶 Agente Cane";
-        if (t.Contains("😂") && (t.Contains("barzelletta") || t.Contains("ridere"))) return "😂 Agente Barzellette";
-        if (t.Contains("🐱") && (t.Contains("gatto") || t.Contains("cat") || t.Contains("felino"))) return "🐱 Agente Gatto";
-        if (t.Contains("🍹") && (t.Contains("cocktail") || t.Contains("drink"))) return "🍹 Agente Cocktail";
-        if (t.Contains("🎮") || t.Contains("pokémon") || t.Contains("pokemon")) return "🎮 Agente Pokémon";
-        if (t.Contains("📚") && (t.Contains("quiz") || t.Contains("domanda"))) return "📚 Agente Quiz";
-        if (t.Contains("sfida") && (t.Contains("bonus") || t.Contains("accetti"))) return "🎲 Agente Sfida";
+        if (t.Contains("🔒") && (t.Contains("prigione") || t.Contains("prison"))) return "🔒 Agente Prigione";
+        if (t.Contains("📊") && (t.Contains("punteggio") || t.Contains("classifica") || t.Contains("turno"))) return "📊 Agente Punteggio";
+        if (t.Contains("🐶") && (t.Contains("cane") || t.Contains("razza") || t.Contains("dog"))) return "🎯 Prova Cane";
+        if (t.Contains("😂") && (t.Contains("barzelletta") || t.Contains("ridere"))) return "🎯 Prova Barzelletta";
+        if (t.Contains("🐱") && (t.Contains("gatto") || t.Contains("cat") || t.Contains("felino"))) return "🎯 Prova Gatto";
+        if (t.Contains("🍹") && (t.Contains("cocktail") || t.Contains("drink"))) return "🎯 Prova Cocktail";
+        if (t.Contains("🎮") || t.Contains("pokémon") || t.Contains("pokemon")) return "🎯 Prova Pokémon";
+        if (t.Contains("📚") && (t.Contains("quiz") || t.Contains("domanda"))) return "🎯 Prova Quiz";
+        if (t.Contains("sfida") && (t.Contains("bonus") || t.Contains("accetti"))) return "🎯 Prova Sfida";
+        if (t.Contains("tocca a") || t.Contains("prossimo")) return "📊 Agente Punteggio";
         return "🎩 Game Master";
     }
 
-    private void TryUpdatePosition(string text)
+    private async Task SyncGameState()
     {
-        Regex[] patterns =
-        [
-            new(@"\[(\d+)\]", RegexOptions.IgnoreCase),
-            new(@"casella\s+(?:numero\s+)?(\d+)", RegexOptions.IgnoreCase),
-            new(@"posizione[:\s]+(\d+)", RegexOptions.IgnoreCase),
-            new(@"sei\s+(?:ora\s+)?(?:alla|sulla)\s+(?:casella\s+)?(\d+)", RegexOptions.IgnoreCase),
-            new(@"avanzi?\s+alla\s+(?:casella\s+)?(\d+)", RegexOptions.IgnoreCase),
-            new(@"newPosition["":\s]+(\d+)", RegexOptions.IgnoreCase),
-        ];
-
-        foreach (var re in patterns)
+        try
         {
-            var m = re.Match(text);
-            if (m.Success && int.TryParse(m.Groups[1].Value, out var pos) && pos is >= 1 and <= 20 && pos != _playerPosition)
+            using var client = CreateClient();
+
+            var scoreData = await client.GetFromJsonAsync<JsonElement>("/game/scoreboard");
+            if (scoreData.TryGetProperty("players", out var players))
             {
-                _playerPosition = pos;
-                _turnCount++;
-                return;
+                _scoreboard.Clear();
+                foreach (var p in players.EnumerateArray())
+                {
+                    var hasFinished = p.TryGetProperty("hasFinished", out var hf) && hf.GetBoolean();
+                    _scoreboard.Add(new(
+                        p.GetProperty("name").GetString() ?? "?",
+                        p.GetProperty("position").GetInt32(),
+                        p.GetProperty("isHuman").GetBoolean(),
+                        p.TryGetProperty("turnsToSkip", out var ts) ? ts.GetInt32() : 0,
+                        hasFinished));
+
+                    if (hasFinished) _gameFinished = true;
+                }
+            }
+
+            // Leggi il giocatore di turno dal server
+            // Il Score Agent chiama AdvanceToNextPlayer che gestisce la prigione automaticamente
+            var cpData = await client.GetFromJsonAsync<JsonElement>("/game/current-player");
+            if (cpData.TryGetProperty("currentPlayer", out var cp) && cp.ValueKind == JsonValueKind.String)
+            {
+                var serverPlayer = cp.GetString();
+                if (!string.IsNullOrEmpty(serverPlayer))
+                    _currentPlayerName = serverPlayer;
             }
         }
+        catch { /* non-critical */ }
     }
 
     private async Task RefreshScoreboard()
     {
         try
         {
-            using var client = CreateClient();
-            var data = await client.GetFromJsonAsync<JsonElement>("/game/scoreboard");
-            if (data.TryGetProperty("players", out var players))
-            {
-                var list = new List<ScoreEntry>();
-                foreach (var p in players.EnumerateArray())
-                {
-                    list.Add(new(
-                        p.GetProperty("name").GetString() ?? "?",
-                        p.GetProperty("position").GetInt32(),
-                        p.GetProperty("isHuman").GetBoolean()));
-                }
-                _scoreboard = list;
-                await InvokeAsync(StateHasChanged);
-            }
+            await SyncGameState();
+            await InvokeAsync(StateHasChanged);
         }
         catch { /* non-critical */ }
-    }
-
-    private async Task SyncPlayerPosition()
-    {
-        try
-        {
-            using var client = CreateClient();
-            var data = await client.GetFromJsonAsync<JsonElement>(
-                $"/game/player/{Uri.EscapeDataString(_playerName)}");
-
-            if (data.TryGetProperty("position", out var posProp))
-            {
-                var serverPos = posProp.GetInt32();
-                if (serverPos > _playerPosition)
-                {
-                    _playerPosition = serverPos;
-                }
-            }
-            if (data.TryGetProperty("turnsPlayed", out var turnsProp))
-            {
-                var serverTurns = turnsProp.GetInt32();
-                if (serverTurns > _turnCount)
-                {
-                    _turnCount = serverTurns;
-                }
-            }
-        }
-        catch { /* non-critical: il server potrebbe non avere ancora il giocatore */ }
     }
 
     public void Dispose() => _scoreboardTimer?.Dispose();

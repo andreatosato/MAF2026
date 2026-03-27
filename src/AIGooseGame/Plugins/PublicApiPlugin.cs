@@ -7,10 +7,180 @@ namespace AIGooseGame.Plugins;
 /// <summary>
 /// Plugin con tutte le chiamate alle API pubbliche (NO auth!) 🌐
 /// e il lancio del dado per il Gioco dell'Oca 🎲
+/// Include tool per tabellone dinamico, multiplayer e prigione
 /// </summary>
 public class PublicApiPlugin(HttpClient httpClient, GameState gameState)
 {
     private static readonly Random _random = Random.Shared;
+
+    // ─── 🎮 Inizializzazione gioco ─────────────────────────────────────────────
+
+    [Description("Verifica lo stato del flusso di gioco: giocatore corrente e se c'è una sfida pendente. " +
+                 "CHIAMA SEMPRE QUESTO TOOL COME PRIMA COSA prima di qualsiasi altra azione! " +
+                 "Se shouldTransferToChallenge è TRUE, trasferisci IMMEDIATAMENTE al challenge-agent!")]
+    public string GetGameFlowStatus()
+    {
+        var current = gameState.GetCurrentPlayer();
+        var pending = gameState.PendingChallengePlayer;
+        var hasPending = pending != null;
+
+        // Auto-clear pending challenge per bot (non-umani) per prevenire loop infiniti.
+        // I bot devono completare le prove in un solo passaggio (FASE UNICA).
+        if (hasPending && current != null
+            && string.Equals(pending, current.Name, StringComparison.OrdinalIgnoreCase)
+            && !current.IsHuman)
+        {
+            gameState.ClearPendingChallenge();
+            pending = null;
+            hasPending = false;
+        }
+
+        var shouldTransfer = hasPending
+            && current != null
+            && string.Equals(pending, current.Name, StringComparison.OrdinalIgnoreCase);
+
+        return JsonSerializer.Serialize(new
+        {
+            currentPlayer = current?.Name,
+            currentPlayerIsHuman = current?.IsHuman ?? false,
+            pendingChallengePlayer = pending,
+            hasPendingChallenge = hasPending,
+            shouldTransferToChallenge = shouldTransfer
+        });
+    }
+
+    [Description("Segna che c'è una sfida pendente per un giocatore UMANO (FASE 1 completata). " +
+                 "NON usare per bot AI! I bot completano la prova in un unico passaggio.")]
+    public string SetPendingChallenge(
+        [Description("Nome del giocatore UMANO con sfida pendente")] string playerName)
+    {
+        var player = gameState.GetPlayer(playerName);
+        if (player is null)
+            return JsonSerializer.Serialize(new { error = "Giocatore non trovato", playerName, set = false });
+        if (!player.IsHuman)
+            return JsonSerializer.Serialize(new { error = "Solo per giocatori UMANI! I bot completano la prova in un solo passaggio.", playerName, set = false });
+        gameState.SetPendingChallenge(playerName);
+        return JsonSerializer.Serialize(new { pendingChallenge = playerName, set = true });
+    }
+
+    [Description("Inizializza il gioco con un tabellone dinamico. Crea caselle casuali con prove, prigione e bonus. " +
+                 "Chiamalo all'inizio della partita PRIMA di registrare i giocatori.")]
+    public string InitializeGame(
+        [Description("Dimensione del tabellone (default 20, min 10, max 40)")] int boardSize = 20)
+    {
+        boardSize = Math.Clamp(boardSize, 10, 40);
+        gameState.InitializeBoard(boardSize);
+        return JsonSerializer.Serialize(new
+        {
+            boardSize = gameState.BoardSize,
+            board = gameState.Board.Select(s => new
+            {
+                position = s.Position,
+                type = s.Type.ToString().ToLowerInvariant(),
+                emoji = s.Emoji,
+                label = s.Label
+            }),
+            boardString = gameState.GetBoardString()
+        });
+    }
+
+    // ─── 🗺️ Info tabellone ─────────────────────────────────────────────────────
+
+    [Description("Restituisce le informazioni sul tabellone corrente con tutte le caselle.")]
+    public string GetBoardInfo()
+    {
+        if (!gameState.IsGameInitialized)
+            return JsonSerializer.Serialize(new { error = "Il gioco non è stato inizializzato. Chiama InitializeGame prima." });
+
+        return JsonSerializer.Serialize(new
+        {
+            boardSize = gameState.BoardSize,
+            board = gameState.Board.Select(s => new
+            {
+                position = s.Position,
+                type = s.Type.ToString().ToLowerInvariant(),
+                emoji = s.Emoji
+            }),
+            boardString = gameState.GetBoardString()
+        });
+    }
+
+    // ─── 👥 Giocatore corrente ──────────────────────────────────────────────────
+
+    [Description("Restituisce il giocatore di turno e la lista di tutti i giocatori registrati.")]
+    public string GetCurrentPlayerInfo()
+    {
+        var current = gameState.GetCurrentPlayer();
+        return JsonSerializer.Serialize(new
+        {
+            currentPlayer = current is not null ? new
+            {
+                name = current.Name,
+                position = current.Position,
+                turnsToSkip = current.TurnsToSkip
+            } : null,
+            allPlayers = gameState.GetPlayerOrder()
+        });
+    }
+
+    // ─── ⏭️ Turno successivo ────────────────────────────────────────────────────
+
+    [Description("Passa al giocatore successivo. Salta automaticamente chi è in prigione. " +
+                 "Restituisce il prossimo giocatore e chi è stato saltato.")]
+    public string AdvanceToNextPlayer()
+    {
+        var (next, skipped) = gameState.AdvanceToNextPlayer();
+        return JsonSerializer.Serialize(new
+        {
+            nextPlayer = next is not null ? new
+            {
+                name = next.Name,
+                position = next.Position,
+                turnsPlayed = next.TurnsPlayed,
+                turnsToSkip = next.TurnsToSkip,
+                isHuman = next.IsHuman
+            } : null,
+            skippedPlayers = skipped
+        });
+    }
+
+    // ─── 🔒 Prigione ────────────────────────────────────────────────────────────
+
+    [Description("Applica la prigione al giocatore: il giocatore perderà N turni. " +
+                 "Usa turnsToSkip tra 1 e 2.")]
+    public string ApplyPrisonToPlayer(
+        [Description("Nome del giocatore")] string playerName,
+        [Description("Numero di turni da saltare (1-2)")] int turnsToSkip)
+    {
+        var player = gameState.GetPlayer(playerName);
+        if (player is null)
+            return JsonSerializer.Serialize(new { error = "Giocatore non trovato", playerName });
+
+        turnsToSkip = Math.Clamp(turnsToSkip, 1, 2);
+        var updated = gameState.ApplyPrison(playerName, turnsToSkip);
+        return JsonSerializer.Serialize(new
+        {
+            playerName = updated.Name,
+            turnsToSkip = updated.TurnsToSkip,
+            position = updated.Position
+        });
+    }
+
+    // ─── 🎮 Registrazione giocatore ────────────────────────────────────────────
+
+    [Description("Registra un giocatore nel Gioco dell'Oca. Restituisce JSON con il nome e la posizione iniziale. " +
+                 "Chiamalo quando il giocatore si presenta per la prima volta o se un altro tool restituisce 'Giocatore non trovato'.")]
+    public string JoinGame(
+        [Description("Nome del giocatore da registrare")] string playerName)
+    {
+        var player = gameState.JoinGame(playerName, isHuman: true);
+        return JsonSerializer.Serialize(new
+        {
+            playerName = player.Name,
+            position = player.Position,
+            registered = true
+        });
+    }
 
     // ─── 🎲 Dado ───────────────────────────────────────────────────────────────
 
@@ -22,12 +192,11 @@ public class PublicApiPlugin(HttpClient httpClient, GameState gameState)
         var player = gameState.GetPlayer(playerName);
         if (player is null)
         {
-            // Fallback: giocatore non trovato, restituisci solo il dado
-            return JsonSerializer.Serialize(new { diceValue = dice, newPosition = -1, squareType = "unknown", finished = false, playerName, error = "Giocatore non trovato nel GameState" });
+            gameState.JoinGame(playerName, isHuman: true);
         }
 
         var (updated, finished) = gameState.MovePlayer(playerName, dice);
-        var squareType = gameState.GetSquareType(updated.Position);
+        var squareType = gameState.GetSquareTypeString(updated.Position);
 
         return JsonSerializer.Serialize(new
         {
@@ -41,7 +210,7 @@ public class PublicApiPlugin(HttpClient httpClient, GameState gameState)
 
     // ─── 📊 Stato giocatore ────────────────────────────────────────────────────
 
-    [Description("Ottieni lo stato attuale del giocatore: posizione corrente, tipo di casella, turni giocati e se ha finito il gioco.")]
+    [Description("Ottieni lo stato attuale del giocatore: posizione corrente, tipo di casella, turni giocati, prigione e se ha finito il gioco.")]
     public string GetPlayerStatus([Description("Nome del giocatore")] string playerName)
     {
         var player = gameState.GetPlayer(playerName);
@@ -54,9 +223,10 @@ public class PublicApiPlugin(HttpClient httpClient, GameState gameState)
         {
             playerName = player.Name,
             position = player.Position,
-            squareType = gameState.GetSquareType(player.Position),
+            squareType = gameState.GetSquareTypeString(player.Position),
             turnsPlayed = player.TurnsPlayed,
-            hasFinished = player.HasFinished
+            hasFinished = player.HasFinished,
+            turnsToSkip = player.TurnsToSkip
         });
     }
 
@@ -73,12 +243,13 @@ public class PublicApiPlugin(HttpClient httpClient, GameState gameState)
         var player = gameState.GetPlayer(playerName);
         if (player is null)
         {
-            return JsonSerializer.Serialize(new { error = "Giocatore non trovato", playerName, bonus });
+            gameState.JoinGame(playerName, isHuman: true);
+            player = gameState.GetPlayer(playerName)!;
         }
 
         var previousPosition = player.Position;
         var updated = gameState.ApplyBonus(playerName, bonus);
-        var squareType = gameState.GetSquareType(updated.Position);
+        var squareType = gameState.GetSquareTypeString(updated.Position);
 
         return JsonSerializer.Serialize(new
         {
@@ -190,21 +361,4 @@ public class PublicApiPlugin(HttpClient httpClient, GameState gameState)
         });
     }
 
-    // ─── 🎲 Bored API ──────────────────────────────────────────────────────────
-
-    [Description("Proponi una sfida bonus dal Bored API. Se il giocatore accetta → +3 caselle. Se rifiuta → -1 casella.")]
-    public async Task<string> GetBonusActivity()
-    {
-        var response = await httpClient.GetFromJsonAsync<JsonElement>("https://www.boredapi.com/api/activity");
-        var activity = response.GetProperty("activity").GetString() ?? "";
-        var type = response.TryGetProperty("type", out var t) ? t.GetString() ?? "" : "";
-
-        return JsonSerializer.Serialize(new
-        {
-            activity,
-            type,
-            bonusIfAccepted = 3,
-            penaltyIfRefused = -1
-        });
     }
-}

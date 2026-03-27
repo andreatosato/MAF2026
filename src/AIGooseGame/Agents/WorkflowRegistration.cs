@@ -6,6 +6,7 @@ namespace AIGooseGame.Agents;
 
 /// <summary>
 /// Registrazione di tutti gli agenti e del workflow Handoff 🔄
+/// Nuovo flusso: Game Master → Challenge/Prison → Score → Game Master
 /// </summary>
 public static class WorkflowRegistration
 {
@@ -17,38 +18,37 @@ public static class WorkflowRegistration
     {
         // Registrazione agenti
         var gameMaster = GameMasterAgentRegistration.Register(builder);
-        var dogAgent = DogAgentRegistration.Register(builder);
-        var jokeAgent = JokeAgentRegistration.Register(builder);
-        var catAgent = CatAgentRegistration.Register(builder);
-        var cocktailAgent = CocktailAgentRegistration.Register(builder);
-        var pokemonAgent = PokemonAgentRegistration.Register(builder);
-        var bonusAgent = BonusAgentRegistration.Register(builder);
-        var quizAgent = QuizAgentRegistration.Register(builder);
+        var challengeAgent = ChallengeAgentRegistration.Register(builder);
+        var prisonAgent = PrisonAgentRegistration.Register(builder);
+        var scoreAgent = ScoreAgentRegistration.Register(builder);
 
         // ─────────────────────────────────────────────────────────────────────
-        // 1️⃣ Workflow Handoff 🔄
+        // Workflow Handoff 🔄
+        // Game Master → Challenge Agent (prove) o Prison Agent (prigione)
+        // Challenge Agent → Score Agent (aggiorna punteggio)
+        // Prison Agent → Score Agent (aggiorna punteggio)
+        // Score Agent → Game Master (prossimo turno)
         // ─────────────────────────────────────────────────────────────────────
 
         builder.AddWorkflow("goose-game", (sp, key) =>
         {
             var gm = sp.GetRequiredKeyedService<AIAgent>(gameMaster.Name);
-            var dog = sp.GetRequiredKeyedService<AIAgent>(dogAgent.Name);
-            var joke = sp.GetRequiredKeyedService<AIAgent>(jokeAgent.Name);
-            var cat = sp.GetRequiredKeyedService<AIAgent>(catAgent.Name);
-            var cocktail = sp.GetRequiredKeyedService<AIAgent>(cocktailAgent.Name);
-            var pokemon = sp.GetRequiredKeyedService<AIAgent>(pokemonAgent.Name);
-            var bonus = sp.GetRequiredKeyedService<AIAgent>(bonusAgent.Name);
-            var quiz = sp.GetRequiredKeyedService<AIAgent>(quizAgent.Name);
+            var challenge = sp.GetRequiredKeyedService<AIAgent>(challengeAgent.Name);
+            var prison = sp.GetRequiredKeyedService<AIAgent>(prisonAgent.Name);
+            var score = sp.GetRequiredKeyedService<AIAgent>(scoreAgent.Name);
 
             var workflow = AgentWorkflowBuilder
                 .CreateHandoffBuilderWith(gm)
-                .WithHandoffs(gm, [dog, joke, cat, cocktail, pokemon, bonus, quiz])
-                .WithHandoffs([dog, joke, cat, cocktail, pokemon, bonus, quiz], gm)
+                // Game Master → Challenge Agent, Prison Agent
+                .WithHandoffs(gm, [challenge, prison])
+                // Challenge Agent → Score Agent
+                .WithHandoffs(challenge, [score])
+                // Prison Agent → Score Agent
+                .WithHandoffs(prison, [score])
+                // Score Agent → Game Master
+                .WithHandoffs(score, [gm])
                 .Build();
 
-            // HandoffsWorkflowBuilder.Build() non imposta il nome sul Workflow,
-            // ma AddWorkflow richiede che workflow.Name corrisponda alla chiave.
-            // Il setter è internal → reflection necessaria.
             typeof(Workflow).GetProperty(nameof(Workflow.Name))!.SetValue(workflow, key);
 
             return workflow;

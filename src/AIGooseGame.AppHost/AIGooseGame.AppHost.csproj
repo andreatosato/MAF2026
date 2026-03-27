@@ -10,6 +10,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\AIGooseGame\AIGooseGame.csproj" />
+    <ProjectReference Include="..\WriterAgent\WriterAgent.csproj" />
+    <ProjectReference Include="..\EditorAgent\EditorAgent.csproj" />
   </ItemGroup>
 
   <ItemGroup>

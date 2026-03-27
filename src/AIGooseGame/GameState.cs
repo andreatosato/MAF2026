@@ -3,6 +3,27 @@ using System.Collections.Concurrent;
 namespace AIGooseGame;
 
 /// <summary>
+/// Tipo di casella del tabellone 🎲
+/// </summary>
+public enum SquareType
+{
+    Start,
+    Dog,
+    Joke,
+    Cat,
+    Cocktail,
+    Pokemon,
+    Quiz,
+    Prison,
+    Finish
+}
+
+/// <summary>
+/// Definizione di una casella del tabellone
+/// </summary>
+public record BoardSquareDefinition(int Position, SquareType Type, string Emoji, string Label);
+
+/// <summary>
 /// Stato di un singolo giocatore nel Gioco dell'Oca 🎲
 /// </summary>
 public record PlayerState(
@@ -10,45 +31,94 @@ public record PlayerState(
     int Position = 0,
     int TurnsPlayed = 0,
     bool HasFinished = false,
-    bool IsHuman = false
+    bool IsHuman = false,
+    int TurnsToSkip = 0
 );
 
 /// <summary>
-/// Gestione multi-giocatore con ConcurrentDictionary per la sicurezza dei thread 🏆
+/// Gestione multi-giocatore con tabellone dinamico e prigione 🏆
 /// </summary>
 public class GameState
 {
-    public const int BoardSize = 20;
+    private static readonly Random _random = Random.Shared;
+    private readonly ConcurrentDictionary<string, PlayerState> _players = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<string> _playerOrder = [];
+    private int _currentPlayerIndex;
+    private List<BoardSquareDefinition> _board = [];
+    private bool _gameInitialized;
+
+    public int BoardSize => _board.Count > 0 ? _board.Count - 1 : 20;
+    public bool IsGameInitialized => _gameInitialized;
+    public IReadOnlyList<BoardSquareDefinition> Board => _board;
 
     /// <summary>
-    /// Mappa le caselle del tabellone: indice = posizione (1-based), valore = tipo di casella
+    /// Giocatore con sfida pendente (FASE 1 completata, attende risposta umana)
     /// </summary>
-    public static readonly string[] BoardSquares =
-    [
-        "start",     // 0 - START
-        "dog",       // 1 🐶
-        "joke",      // 2 😂
-        "cat",       // 3 🐱
-        "cocktail",  // 4 🍹
-        "pokemon",   // 5 🎮
-        "bonus",     // 6 🎲
-        "quiz",      // 7 📚 MCP Microsoft Learn
-        "joke",      // 8 😂
-        "cat",       // 9 🐱
-        "cocktail",  // 10 🍹
-        "pokemon",   // 11 🎮
-        "bonus",     // 12 🎲
-        "dog",       // 13 🐶
-        "quiz",      // 14 📚 MCP Microsoft Learn
-        "cat",       // 15 🐱
-        "cocktail",  // 16 🍹
-        "pokemon",   // 17 🎮
-        "bonus",     // 18 🎲
-        "dog",       // 19 🐶
-        "finish",    // 20 🏆 FINE
-    ];
+    public string? PendingChallengePlayer { get; private set; }
 
-    private readonly ConcurrentDictionary<string, PlayerState> _players = new(StringComparer.OrdinalIgnoreCase);
+    public void SetPendingChallenge(string playerName) => PendingChallengePlayer = playerName;
+    public void ClearPendingChallenge() => PendingChallengePlayer = null;
+
+    private static readonly Dictionary<SquareType, string> SquareEmojis = new()
+    {
+        [SquareType.Start] = "🏁",
+        [SquareType.Dog] = "🐶",
+        [SquareType.Joke] = "😂",
+        [SquareType.Cat] = "🐱",
+        [SquareType.Cocktail] = "🍹",
+        [SquareType.Pokemon] = "🎮",
+        [SquareType.Quiz] = "📚",
+        [SquareType.Prison] = "🔒",
+        [SquareType.Finish] = "🏆",
+    };
+
+    /// <summary>
+    /// Inizializza il tabellone dinamico e resetta lo stato del gioco
+    /// </summary>
+    public void InitializeBoard(int size = 20)
+    {
+        _board = GenerateBoard(size);
+        _gameInitialized = true;
+        _currentPlayerIndex = 0;
+        _players.Clear();
+        _playerOrder.Clear();
+    }
+
+    private static List<BoardSquareDefinition> GenerateBoard(int size)
+    {
+        var board = new List<BoardSquareDefinition>
+        {
+            new(0, SquareType.Start, "🏁", "START")
+        };
+
+        var challengeTypes = new[]
+        {
+            SquareType.Dog,
+            SquareType.Joke,
+            SquareType.Cat,
+            SquareType.Cocktail,
+            SquareType.Pokemon,
+            SquareType.Quiz,
+        };
+
+        for (int i = 1; i < size; i++)
+        {
+            SquareType type;
+            if (_random.Next(100) < 18)
+            {
+                type = SquareType.Prison;
+            }
+            else
+            {
+                type = challengeTypes[_random.Next(challengeTypes.Length)];
+            }
+            var emoji = SquareEmojis[type];
+            board.Add(new(i, type, emoji, i.ToString()));
+        }
+
+        board.Add(new(size, SquareType.Finish, "🏆", "FINE"));
+        return board;
+    }
 
     /// <summary>
     /// Aggiunge un giocatore alla partita o lo resetta se già presente
@@ -57,7 +127,59 @@ public class GameState
     {
         var player = new PlayerState(name, IsHuman: isHuman);
         _players[name] = player;
+        if (!_playerOrder.Contains(name, StringComparer.OrdinalIgnoreCase))
+            _playerOrder.Add(name);
         return player;
+    }
+
+    /// <summary>
+    /// Ottiene il giocatore corrente (di turno)
+    /// </summary>
+    public PlayerState? GetCurrentPlayer()
+    {
+        if (_playerOrder.Count == 0) return null;
+        var name = _playerOrder[_currentPlayerIndex % _playerOrder.Count];
+        return GetPlayer(name);
+    }
+
+    /// <summary>
+    /// Ottiene il nome del giocatore corrente
+    /// </summary>
+    public string? GetCurrentPlayerName()
+    {
+        if (_playerOrder.Count == 0) return null;
+        return _playerOrder[_currentPlayerIndex % _playerOrder.Count];
+    }
+
+    /// <summary>
+    /// Passa al giocatore successivo, saltando chi è in prigione
+    /// </summary>
+    public (PlayerState? NextPlayer, List<string> SkippedPlayers) AdvanceToNextPlayer()
+    {
+        if (_playerOrder.Count == 0) return (null, []);
+
+        // Auto-clear sfida pendente quando il turno avanza
+        PendingChallengePlayer = null;
+
+        var skipped = new List<string>();
+
+        for (int i = 0; i < _playerOrder.Count; i++)
+        {
+            _currentPlayerIndex = (_currentPlayerIndex + 1) % _playerOrder.Count;
+            var player = GetCurrentPlayer()!;
+
+            if (player.TurnsToSkip > 0)
+            {
+                skipped.Add(player.Name);
+                _players[player.Name] = player with { TurnsToSkip = player.TurnsToSkip - 1 };
+                continue;
+            }
+
+            return (player, skipped);
+        }
+
+        // Tutti in prigione — tocca comunque al prossimo
+        return (GetCurrentPlayer(), skipped);
     }
 
     /// <summary>
@@ -89,6 +211,19 @@ public class GameState
     }
 
     /// <summary>
+    /// Applica la prigione: il giocatore perderà N turni
+    /// </summary>
+    public PlayerState ApplyPrison(string name, int turnsToSkip)
+    {
+        if (!_players.TryGetValue(name, out var player))
+            throw new InvalidOperationException($"Giocatore '{name}' non trovato.");
+
+        var updated = player with { TurnsToSkip = turnsToSkip };
+        _players[name] = updated;
+        return updated;
+    }
+
+    /// <summary>
     /// Applica un bonus/malus alla posizione del giocatore
     /// </summary>
     public PlayerState ApplyBonus(string name, int bonus)
@@ -110,14 +245,20 @@ public class GameState
     }
 
     /// <summary>
-    /// Restituisce il tipo di casella per una posizione data
+    /// Restituisce il tipo di casella per una posizione data (enum)
     /// </summary>
-    public string GetSquareType(int position)
+    public SquareType GetSquareType(int position)
     {
-        if (position < 0 || position >= BoardSquares.Length)
-            return "finish";
-        return BoardSquares[position];
+        if (position < 0 || position >= _board.Count)
+            return SquareType.Finish;
+        return _board[position].Type;
     }
+
+    /// <summary>
+    /// Restituisce il tipo di casella come stringa
+    /// </summary>
+    public string GetSquareTypeString(int position) =>
+        GetSquareType(position).ToString().ToLowerInvariant();
 
     /// <summary>
     /// Restituisce la classifica corrente di tutti i giocatori
@@ -128,4 +269,15 @@ public class GameState
             .ThenByDescending(p => p.Position)
             .ThenBy(p => p.TurnsPlayed)
             .ToList();
+
+    /// <summary>
+    /// Restituisce l'elenco dei giocatori nell'ordine di turno
+    /// </summary>
+    public IReadOnlyList<string> GetPlayerOrder() => _playerOrder;
+
+    /// <summary>
+    /// Restituisce il tabellone come stringa leggibile
+    /// </summary>
+    public string GetBoardString() =>
+        string.Join("→", _board.Select(s => $"[{s.Position}]{s.Emoji}"));
 }

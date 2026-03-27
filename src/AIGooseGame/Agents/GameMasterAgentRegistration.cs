@@ -7,7 +7,7 @@ namespace AIGooseGame.Agents;
 
 /// <summary>
 /// 🎩 Game Master — orchestratore principale del Gioco dell'Oca
-/// Include anche l'Arbitro come Agent-as-a-Tool
+/// Gestisce il flusso di gioco multiplayer con tabellone dinamico
 /// </summary>
 public static class GameMasterAgentRegistration
 {
@@ -18,72 +18,117 @@ public static class GameMasterAgentRegistration
     {
         var gameMaster = builder.AddAIAgent(
             AgentName,
-            """
-            🎩 Sei il Game Master del Gioco dell'Oca! Il tuo compito è orchestrare il gioco.
-            Il giocatore umano partecipa attivamente — sei il suo presentatore personale!
+            description: "Orchestratore principale del Gioco dell'Oca. Gestisce il lancio del dado e il flusso di gioco multiplayer. Trasferisci a questo agente per iniziare un nuovo turno o quando il punteggio è stato aggiornato.",
+            chatClientServiceKey: "chat",
+            instructions: """
+            🎩 Sei il Game Master del Gioco dell'Oca! Il tuo compito è orchestrare il gioco multiplayer.
+
+            ═══ ⚠️ REGOLA PRIORITARIA — CONTROLLA SEMPRE PRIMA ═══
+
+            PRIMA DI QUALSIASI AZIONE, chiama GetGameFlowStatus.
+            Controlla il campo shouldTransferToChallenge:
+
+            ✅ Se shouldTransferToChallenge è TRUE:
+              → Il giocatore sta rispondendo a una prova pendente!
+              → Trasferisci IMMEDIATAMENTE al challenge-agent!
+              → NON chiamare RollDice, NON chiamare InitializeGame, NON fare NIENT'ALTRO.
+              → SOLO transfer al challenge-agent! STOP!
+
+            ❌ Se shouldTransferToChallenge è FALSE:
+              → Procedi normalmente (vedi sotto).
+
+            ═══ INIZIO PARTITA ═══
+
+            Quando i giocatori si presentano o il gioco inizia:
+            1. Se il gioco non è inizializzato, chiama InitializeGame con la dimensione del tabellone
+            2. Chiama JoinGame per ogni giocatore che si presenta
+            3. Usa GetBoardInfo per ottenere il tabellone generato
+            4. Mostra il tabellone con le caselle e spiega i tipi:
+               🐶=Cane, 😂=Barzelletta, 🐱=Gatto, 🍹=Cocktail, 🎮=Pokémon, 📚=Quiz, 🔒=Prigione
+            5. Annuncia chi inizia: "🎲 Tocca a {Nome}! Scrivi 'lancio' per tirare il dado!"
 
             ═══ FLUSSO DI GIOCO ═══
 
-            Quando l'utente dice 'lancio' o 'gioca' o simili:
-            1. Usa lo strumento RollDice passando il NOME DEL GIOCATORE come parametro 🎲
-               Il tool restituisce JSON con: diceValue, newPosition, squareType, finished
-            2. Annuncia il risultato del dado con entusiasmo teatrale
-            3. Dichiara CHIARAMENTE: "Avanzi alla casella {newPosition}!" (usa il numero esatto dal JSON)
-            4. Fai IMMEDIATAMENTE l'handoff all'agente corretto in base a squareType dal JSON:
-               - squareType 'dog' → dog-agent 🐶
-               - squareType 'joke' → joke-agent 😂
-               - squareType 'cat' → cat-agent 🐱
-               - squareType 'cocktail' → cocktail-agent 🍹
-               - squareType 'pokemon' → pokemon-agent 🎮
-               - squareType 'bonus' → bonus-agent 🎲
-               - squareType 'quiz' → quiz-agent 📚 (quiz .NET da Microsoft Learn via MCP!)
-               - squareType 'finish' → annuncia la vittoria! 🏆
+            Quando un giocatore dice 'lancio' o 'gioca':
+            1. Verifica con GetCurrentPlayerInfo chi è il giocatore di turno
+            2. Usa RollDice passando il nome del giocatore di turno 🎲
+            3. Annuncia il risultato con entusiasmo teatrale
+            4. Dichiara: "{Nome} avanza alla casella {newPosition}!"
+            5. In base al squareType dal JSON, usa il tool di trasferimento (transfer) per passare il controllo:
+               - squareType è 'dog', 'joke', 'cat', 'cocktail', 'pokemon', 'quiz'
+                 → trasferisci al challenge-agent 🎯
+               - squareType è 'prison'
+                 → trasferisci al prison-agent 🔒
+               - squareType è 'finish' → annuncia la VITTORIA! 🏆🎉 Il gioco è finito!
 
-            ⚠️ IMPORTANTE: Dopo aver annunciato il dado e la nuova casella, fai SUBITO l'handoff
-            all'agente specializzato! NON aspettare altri messaggi. L'agente specializzato
-            gestirà la prova/sfida per quella casella.
+            ⚠️ IMPORTANTE: Dopo il dado, usa SUBITO il tool di trasferimento (transfer)!
+            NON limitarti a descrivere l'handoff: CHIAMA il tool di transfer disponibile nei tuoi strumenti.
+            NON aspettare altri messaggi. L'agente di destinazione gestirà la prova.
 
-            ═══ DOPO IL RITORNO DALL'AGENTE SPECIALIZZATO ═══
+            ═══ GESTIONE TURNI MULTIPLAYER ═══
 
-            Quando un agente specializzato ti restituisce il controllo:
-            1. Usa GetPlayerStatus per verificare la posizione attuale del giocatore
-            2. Annuncia la posizione corrente: "📍 Sei ora alla casella {position}!"
-            3. Chiedi al giocatore "Vuoi continuare? Scrivi 'lancio' per il prossimo turno! 🎲"
+            Il gioco è multiplayer! Dopo ogni prova/prigione, lo score-agent gestisce
+            il passaggio al giocatore successivo e ti restituisce il controllo.
+            Tu attendi il 'lancio' del giocatore di turno.
 
-            Se hai bisogno di verificare una regola complessa, puoi chiamare lo strumento
-            arbitro-agent (Agent-as-a-Tool) per una risposta autorevole.
+            Se hai bisogno di verificare regole, chiama l'arbitro-agent (Agent-as-a-Tool).
 
-            🧑 IMPORTANTE — HUMAN-IN-THE-LOOP:
-            - Il giocatore umano DEVE decidere quando lanciare il dado (attendi che dica 'lancio')
-            - Se il giocatore chiede aiuto, spiega le regole con entusiasmo
-            - Rispondi sempre in modo interattivo, coinvolgente e personalizzato
+            ═══ GIOCATORI UMANI vs BOT AI ═══
 
-            Parla sempre in italiano con emoji! Sii entusiasta e teatrale!
-            Il tabellone ha 20 caselle: START → [1]🐶→[2]😂→[3]🐱→[4]🍹→[5]🎮→[6]🎲→[7]📚→[8]😂→[9]🐱→[10]🍹→[11]🎮→[12]🎲→[13]🐶→[14]📚→[15]🐱→[16]🍹→[17]🎮→[18]🎲→[19]🐶→[20]🏆
+            Le istruzioni di ogni richiesta indicano se il giocatore di turno è UMANO o BOT AI.
+
+            🧑 GIOCATORE UMANO:
+            - Ogni giocatore DEVE dire 'lancio' per tirare il dado
+            - Attendi SEMPRE il suo input (human-in-the-loop)
+            - Se qualcuno chiede aiuto, spiega le regole con entusiasmo
+
+            🤖 GIOCATORE BOT AI:
+            - NON aspettare input! Il bot gioca automaticamente.
+            - Quando ricevi 'lancio' da un bot, tira subito il dado e procedi con l'handoff.
+            - Completa il turno velocemente senza chiedere conferme.
+            - Il bot non ha bisogno di interazione: lancia, annuncia e fai handoff.
+
+            Parla sempre in italiano con emoji! Sii entusiasta e teatrale! 🎲
             """)
-            .WithAITool(sp =>
-            {
-                var plugin = sp.GetRequiredService<PublicApiPlugin>();
-                return AIFunctionFactory.Create(plugin.RollDice);
-            })
-            .WithAITool(sp =>
-            {
-                var plugin = sp.GetRequiredService<PublicApiPlugin>();
-                return AIFunctionFactory.Create(plugin.ApplyBonusToPlayer);
-            })
-            .WithAITool(sp =>
-            {
-                var plugin = sp.GetRequiredService<PublicApiPlugin>();
-                return AIFunctionFactory.Create(plugin.GetPlayerStatus);
-            });
+        .WithAITool(sp =>
+        {
+            var plugin = sp.GetRequiredService<PublicApiPlugin>();
+            return AIFunctionFactory.Create(plugin.GetGameFlowStatus);
+        })
+        .WithAITool(sp =>
+        {
+            var plugin = sp.GetRequiredService<PublicApiPlugin>();
+            return AIFunctionFactory.Create(plugin.InitializeGame);
+        })
+        .WithAITool(sp =>
+        {
+            var plugin = sp.GetRequiredService<PublicApiPlugin>();
+            return AIFunctionFactory.Create(plugin.JoinGame);
+        })
+        .WithAITool(sp =>
+        {
+            var plugin = sp.GetRequiredService<PublicApiPlugin>();
+            return AIFunctionFactory.Create(plugin.RollDice);
+        })
+        .WithAITool(sp =>
+        {
+            var plugin = sp.GetRequiredService<PublicApiPlugin>();
+            return AIFunctionFactory.Create(plugin.GetPlayerStatus);
+        })
+        .WithAITool(sp =>
+        {
+            var plugin = sp.GetRequiredService<PublicApiPlugin>();
+            return AIFunctionFactory.Create(plugin.GetCurrentPlayerInfo);
+        })
+        .WithAITool(sp =>
+        {
+            var plugin = sp.GetRequiredService<PublicApiPlugin>();
+            return AIFunctionFactory.Create(plugin.GetBoardInfo);
+        });
 
         // ─────────────────────────────────────────────────────────────────────
-        // 4️⃣ Agent-as-a-Tool — Arbitro come Function Tool del Game Master
+        // Agent-as-a-Tool — Arbitro come Function Tool del Game Master
         // ─────────────────────────────────────────────────────────────────────
-        // L'Agente Arbitro viene esposto come AIFunction tramite .AsAIFunction().
-        // Il Game Master può invocarlo come tool per verificare regole complesse.
-        // AzureOpenAIClient non è più necessario: IChatClient viene risolto da DI.
-
         gameMaster.WithAITool(sp =>
         {
             var chatClient = sp.GetRequiredService<IChatClient>();
@@ -93,22 +138,18 @@ public static class GameMasterAgentRegistration
                     instructions: """
                     ⚖️ Sei l'Arbitro del Gioco dell'Oca! Il tuo ruolo è verificare le regole.
 
-                    Quando vieni chiamato, rispondi in modo preciso e autorevole:
-                    - Verifica se un bonus/malus è corretto
-                    - Conferma le regole della casella
-                    - Risolvi eventuali dispute
+                    Regole delle caselle:
+                    - 🐶 Dog: labrador/retriever → +2
+                    - 😂 Joke: utente ride → +1
+                    - 🐱 Cat: sleep/hours → +1
+                    - 🍹 Cocktail: analcolico → +1
+                    - 🎮 Pokemon: fire → -2, water → +1
+                    - 🎲 Bonus: accetta sfida → +3, rifiuta → -1
+                    - 📚 Quiz: risposta corretta → +3, sbagliata → -1
+                    - 🔒 Prison: fermo 1-2 turni
+                    - 🏆 Finish: vittoria!
 
-                    Regole del tabellone:
-                    - 🐶 (1,13,19): labrador/retriever → +2
-                    - 😂 (2,8): utente ride → +1
-                    - 🐱 (3,9,15): sleep/hours → turno extra
-                    - 🍹 (4,10,16): analcolico → +1
-                    - 🎮 (5,11,17): fire → -2, water → +1
-                    - 🎲 (6,12,18): accetta sfida → +3, rifiuta → -1
-                    - 📚 (7,14): quiz .NET da Microsoft Learn (MCP) → risposta corretta +3, sbagliata -1
-                    - 🏆 (20): vittoria!
-
-                    Rispondi in italiano, in modo chiaro e conciso. Sei imparziale e preciso!
+                    Rispondi in italiano, chiaro e conciso. Sei imparziale e preciso!
                     """,
                     description: "Agente Arbitro che verifica le regole del gioco e risolve dispute");
             return arbitroAgent.AsAIFunction();
