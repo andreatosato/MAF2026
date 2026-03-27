@@ -4,7 +4,7 @@
 
 Il **Gioco dell'Oca AI** è un gioco da tavolo virtuale a 20 caselle in cui il giocatore umano sfida il tabellone interagendo con **agenti AI specializzati**. Ogni casella attiva una **prova** diversa: barzellette, sfide, quiz su animali, cocktail misteriosi e battaglie Pokémon!
 
-Il gioco è costruito con **Microsoft Agent Framework** e dimostra: Workflow Handoff, Agent-as-a-Tool, Context Windows, GPT Realtime (voce), salvataggio su Cosmos DB e telemetria Aspire.
+Il gioco è costruito con **Microsoft Agent Framework** e dimostra: Workflow Handoff, Agent-as-a-Tool, Context Windows, salvataggio su Cosmos DB e telemetria Aspire.
 
 ---
 
@@ -145,17 +145,6 @@ Se il punteggio supera 20, il giocatore viene posizionato esattamente alla casel
 
 ---
 
-## 🎤 Modalità Voce (GPT Realtime)
-
-Il gioco supporta anche la **modalità voce** tramite **GPT-4o Realtime API**:
-
-- Collegati all'endpoint WebSocket `/realtime`
-- Parla al Game Master con la tua voce
-- L'agente risponde in audio in tempo reale
-- Stesse regole, stessa interattività, ma a voce! 🎙️
-
----
-
 ## 📊 Classifica
 
 In qualsiasi momento puoi vedere la classifica su `GET /game/scoreboard`:
@@ -188,10 +177,9 @@ In qualsiasi momento puoi vedere la classifica su `GET /game/scoreboard`:
 | 3 | **Aspire + OpenTelemetry** | Log e trace di ogni chiamata AI con la dashboard Aspire |
 | 4 | **Agent-as-a-Tool** | L'agente Arbitro è esposto come tool via `.AsAIFunction()` |
 | 5 | **Cosmos DB** | Salvataggio automatico della cronologia chat con `WithCosmosDBChatHistoryProvider` |
-| 6 | **GPT Realtime** | Endpoint WebSocket `/realtime` per interazione vocale |
-| 7 | **Human-in-the-Loop** | Il giocatore decide quando lanciare e risponde alle prove |
-| 8 | **Function Tools** | 6 API pubbliche + RollDice chiamate come tool dagli agenti |
-| 9 | **DevUI** | Interfaccia web interattiva per debug su `/devui` |
+| 6 | **Human-in-the-Loop** | Il giocatore decide quando lanciare e risponde alle prove |
+| 7 | **Function Tools** | 6 API pubbliche + RollDice chiamate come tool dagli agenti |
+| 8 | **DevUI** | Interfaccia web interattiva per debug su `/devui` |
 
 ---
 

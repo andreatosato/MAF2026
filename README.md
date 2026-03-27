@@ -11,36 +11,33 @@ Una demo completa del **Gioco dell'Oca** (Goose Game) costruita con **Microsoft 
 
 | Feature | Dove viene usata |
 |---|---|
-| **1️⃣ Workflow Handoff** | Il Game Master passa il turno all'agente specializzato della casella |
+| **1️⃣ Workflow Handoff** | Il Game Master passa il turno al Challenge Agent o Prison Agent |
 | **2️⃣ Context Windows** | `SlidingWindowCompactionStrategy` per gestire la storia conversazionale |
 | **3️⃣ Aspire / OpenTelemetry** | Log, trace e metriche AI con dashboard Aspire |
-| **4️⃣ Agent-as-a-Tool** | L'Agente Arbitro esposto come tool via `.AsAIFunction()` |
+| **4️⃣ Agent-as-a-Tool** | Gli ex-agenti (Dog, Joke, Cat, ecc.) sono ora tool del Challenge Agent |
 | **5️⃣ Cosmos DB** | Salvataggio cronologia chat con `WithCosmosDBChatHistoryProvider` |
-| **6️⃣ GPT Realtime** | Endpoint `/realtime/session` per interazione vocale |
 | **Human-in-the-Loop** | Il giocatore umano risponde a domande, accetta sfide, e prende decisioni |
 | **DevUI** | Interfaccia web interattiva per testare e debuggare gli agenti |
-| **Function Tools** | Ogni agente chiama una API pubblica (no auth!) |
+| **Function Tools** | Ogni tipo di casella corrisponde a un tool che chiama un'API pubblica (no auth!) |
 
 ---
 
 ## 🗺️ Il Tabellone
 
-```
-START → [1]🐶 → [2]😂 → [3]🐱 → [4]🍹 → [5]🎮 → [6]🎲 → [7]🐶 →
-        [8]😂 → [9]🐱 → [10]🍹 → [11]🎮 → [12]🎲 → [13]🐶 →
-        [14]😂 → [15]🐱 → [16]🍹 → [17]🎮 → [18]🎲 → [19]🐶 → [20]🏆 FINE
-```
+Il tabellone è **dinamico**: generato casualmente a runtime. Ogni partita ha caselle diverse!
+All'inizio si selezionano il numero di giocatori (2-4) e la dimensione del tabellone (10-40 caselle).
 
-### Caselle e Regole di Gioco
+### Tipi di caselle
 
-| Casella | Agente | API Pubblica (NO AUTH) | Regola |
+| Casella | Tool (del Challenge Agent) | API Pubblica (NO AUTH) | Regola |
 |---|---|---|---|
-| 🐶 (1,7,13,19) | **DogAgent** | `https://dog.ceo/api/breeds/image/random` | Mostra un cane. Se razza labrador/retriever → **+2 bonus!** |
-| 😂 (2,8,14) | **JokeAgent** | `https://official-joke-api.appspot.com/random_joke` | Racconta una barzelletta. Se l'utente ride → **+1 bonus** (HITL) |
-| 🐱 (3,9,15) | **CatAgent** | `https://catfact.ninja/fact` | Condivide un fatto sui gatti. Se menziona "sleep"/"hours" → **turno extra!** |
-| 🍹 (4,10,16) | **CocktailAgent** | `https://www.thecocktaildb.com/api/json/v1/1/random.php` | Serve un cocktail. Se analcolico → **+1 bonus** (guida responsabile!) |
-| 🎮 (5,11,17) | **PokemonAgent** | `https://pokeapi.co/api/v2/pokemon/{1-151}` | Cattura un Pokémon. Se fire → **-2** 🔥. Se water → **+1** 💧 |
-| 🎲 (6,12,18) | **BonusAgent** | `https://www.boredapi.com/api/activity` | Sfida bonus. Accetti → **+3**. Rifiuti → **-1** |
+| 🐶 Dog | `GetRandomDog` | `https://dog.ceo/api/breeds/image/random` | Mostra un cane. Se razza labrador/retriever → **+2 bonus!** |
+| 😂 Joke | `GetJoke` | `https://official-joke-api.appspot.com/random_joke` | Racconta una barzelletta. Se l'utente ride → **+1 bonus** (HITL) |
+| 🐱 Cat | `GetCatFact` | `https://catfact.ninja/fact` | Condivide un fatto sui gatti. Se menziona "sleep"/"hours" → **turno extra!** |
+| 🍹 Cocktail | `GetCocktail` | `https://www.thecocktaildb.com/api/json/v1/1/random.php` | Serve un cocktail. Se analcolico → **+1 bonus** (guida responsabile!) |
+| 🎮 Pokemon | `GetPokemon` | `https://pokeapi.co/api/v2/pokemon/{1-151}` | Cattura un Pokémon. Se fire → **-2** 🔥. Se water → **+1** 💧 |
+| 📚 Quiz | `SearchMicrosoftLearn` | `https://learn.microsoft.com/api/search` | Quiz su .NET/Azure. Corretto → **+3**. Sbagliato → **-1** |
+| 🔒 Prison | — (Prison Agent) | — | Prigione! Fermo **1-2 turni** |
 
 ---
 
@@ -53,30 +50,37 @@ START → [1]🐶 → [2]😂 → [3]🐱 → [4]🍹 → [5]🎮 → [6]🎲 �
       ┌─────────┐   │   ┌──────────────┐     Handoff             │
       │  User   │───┼──▶│  Game Master │◀──────────────────┐     │
       │ (HITL)  │   │   │  🎩 (dice)   │                   │     │
-      └─────────┘   │   │  ⚖️ Arbitro   │ ← Agent-as-Tool  │     │
-                    │   └──────┬───────┘                   │     │
+      └─────────┘   │   └──────┬───────┘                   │     │
                     │          │ Handoff                   │     │
-                    │    ┌─────┴──────────────────────┐    │     │
-                    │    │                            │    │     │
-                    │  [🐶]  [😂]  [🐱]  [🍹]  [🎮]  [🎲]│────┘     │
-                    │ Dog  Joke  Cat Cocktail Pokemon Bonus│         │
-                    │  │    │    │    │      │      │     │         │
-                    │ API  API  API  API    API    API    │         │
-                    └─────────────────────────────────────┘         
+                    │    ┌─────┴─────────┐                 │     │
+                    │    │               │                 │     │
+                    │  ┌─▼────────────┐ ┌▼──────────────┐  │     │
+                    │  │🎯 Challenge  │ │🔒 Prison      │  │     │
+                    │  │  Agent       │ │  Agent        │  │     │
+                    │  │              │ │  (fermo N     │  │     │
+                    │  │ Tools:       │ │   turni)      │  │     │
+                    │  │ 🐶🐱😂🍹🎮📚│ └──────┬────────┘  │     │
+                    │  └──────┬───────┘        │          │     │
+                    │         └────────┬───────┘          │     │
+                    │                  ▼                  │     │
+                    │          ┌───────────────┐          │     │
+                    │          │📊 Score Agent │──────────┘     │
+                    │          │ (turni/punti) │               │
+                    │          └───────────────┘               │
+                    └─────────────────────────────────────────┘
                                     │
                     ┌───────────────┴───────────────┐
                     │       ASP.NET Core Host        │
                     │  /devui  /openai/v1/responses  │
                     │  /game/join  /game/scoreboard  │
-                    │  /realtime/session             │
                     └───────┬────────────────────────┘
                             │
-              ┌─────────────┼─────────────┐
-              │             │             │
-        ┌─────▼──────┐ ┌───▼────┐ ┌──────▼──────┐
-        │ Cosmos DB  │ │ Aspire │ │ GPT Realtime│
-        │ Chat Store │ │ OTel   │ │ WebSocket   │
-        └────────────┘ └────────┘ └─────────────┘
+                    ┌───────┴────────┐
+                    │                │
+              ┌─────▼──────┐  ┌─────▼──────┐
+              │ Cosmos DB  │  │   Aspire   │
+              │ Chat Store │  │   OTel     │
+              └────────────┘  └────────────┘
 ```
 
 ---
@@ -88,12 +92,8 @@ Il giocatore umano è **parte attiva del gioco**! Gli agenti non procedono auton
 | Agente | Momento HITL | Domanda al Giocatore | Effetto |
 |---|---|---|---|
 | 🎩 **Game Master** | Ogni turno | *"Scrivi 'lancio' per lanciare il dado!"* | Il gioco procede solo quando il giocatore lo decide |
-| 🐶 **DogAgent** | Dopo aver mostrato il cane | *"Ti piace questo cane? Come lo chiameresti?"* | Interazione personale |
-| 😂 **JokeAgent** | Dopo la barzelletta | *"Ti ha fatto ridere? Rispondi SÌ o NO!"* | Sì → **+1 bonus** |
-| 🐱 **CatAgent** | Dopo il fatto sui gatti | *"Lo sapevi? Hai un gatto?"* | Interazione personale |
-| 🍹 **CocktailAgent** | Dopo il cocktail | *"Ti piace questo cocktail? Lo ordineresti?"* | Interazione personale |
-| 🎮 **PokemonAgent** | Dopo la cattura | *"Vuoi dare un soprannome al Pokémon?"* | Interazione personale |
-| 🎲 **BonusAgent** | Sfida proposta | *"Accetti la sfida? Rispondi SÌ o NO!"* | Sì → **+3**, No → **-1** |
+| 🎯 **Challenge Agent** | Dopo ogni prova | Domanda specifica in base alla casella (es: "Ti piace questo cane?", "Ti ha fatto ridere?") | Interazione personale + bonus |
+| 🔒 **Prison Agent** | Arrivo in prigione | *"Sei finito in prigione! ⛓️"* | Fermo 1-2 turni |
 
 ### Come funziona il HITL:
 
@@ -190,23 +190,6 @@ Poi apri `http://localhost:18888` per visualizzare trace e log degli agenti.
 
 ---
 
-## 6️⃣ GPT Realtime — Interazione Vocale
-
-L'endpoint `/realtime/session` verifica la connessione e fornisce le info per la sessione WebSocket di **GPT-4o Realtime API**:
-
-```
-GET /realtime/session
-→ {
-    "deployment": "gpt-4o-realtime-preview",
-    "status": "ready",
-    "websocketUrl": "wss://YOUR-RESOURCE.openai.azure.com/openai/realtime?..."
-  }
-```
-
-Il client può connettersi via WebSocket per **interazione vocale in tempo reale** con il Game Master.
-
----
-
 ## 📖 Descrizione Completa del Gioco
 
 Le regole complete, le prove, il flusso di gioco e la spiegazione dettagliata di tutte le caselle sono in [`docs/come-si-gioca.md`](docs/come-si-gioca.md).
@@ -217,16 +200,22 @@ Le regole complete, le prove, il flusso di gioco e la spiegazione dettagliata di
 
 ```
 src/
-└── AIGooseGame/
-    ├── AIGooseGame.csproj          # Packages: Microsoft.Agents.AI.*, Cosmos, OTel
-    ├── Program.cs                  # 8 agenti + Workflow + Agent-as-Tool + Cosmos + OTel + Realtime
-    ├── GameState.cs                # Multi-player con ConcurrentDictionary (human/AI)
-    ├── Plugins/
-    │   └── PublicApiPlugin.cs      # 6 API pubbliche + RollDice
-    ├── appsettings.json            # Azure OpenAI + Cosmos + OTel config
-    ├── appsettings.Development.json
-    └── Properties/
-        └── launchSettings.json    # http://localhost:5150
+├── AIGooseGame.AppHost/          # Aspire host — AI Foundry + Cosmos DB
+├── AIGooseGame/
+│   ├── AIGooseGame.csproj
+│   ├── Program.cs                  # 4 agenti + Workflow Handoff + Cosmos + OTel
+│   ├── GameState.cs                # Multi-player con tabellone dinamico casuale
+│   ├── Agents/                     # GameMaster, Challenge, Prison, Score
+│   ├── Plugins/
+│   │   ├── PublicApiPlugin.cs      # 6 API pubbliche + dado + game logic
+│   │   └── MicrosoftLearnPlugin.cs # Microsoft Learn Search per quiz
+│   ├── Components/                 # Blazor pages e layout
+│   ├── appsettings.json
+│   └── Properties/
+│       └── launchSettings.json
+├── AIGooseGame.ServiceDefaults/    # Aspire service defaults
+├── WriterAgent/                    # Agente standalone — scrive racconti brevi
+├── EditorAgent/                    # Agente standalone — revisiona racconti
 docs/
 ├── come-si-gioca.md               # Descrizione completa del gioco e delle prove
 └── presentation.md                # Slide della presentazione (Marp)
@@ -245,7 +234,7 @@ docs/
 <PackageReference Include="Microsoft.Agents.AI.Workflows" Version="1.0.0-rc4" />
 <PackageReference Include="Microsoft.Agents.AI.CosmosNoSql" Version="1.0.0-preview.260311.1" />
 
-<!-- Azure OpenAI (con Realtime support) -->
+<!-- Azure OpenAI -->
 <PackageReference Include="Azure.AI.OpenAI" Version="2.9.0-beta.1" />
 <PackageReference Include="Azure.Identity" Version="1.17.1" />
 
@@ -260,11 +249,10 @@ docs/
 
 ## ⚙️ Prerequisiti
 
-- [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0)
-- **Azure OpenAI** con deployment di `gpt-4o-mini` (o modello compatibile)
-- (Opzionale) **Azure OpenAI** con deployment `gpt-4o-realtime-preview` per la modalità voce
+- [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
+- **Azure AI Foundry** con deployment di `gpt-4o-mini` (o modello compatibile)
 - (Opzionale) **Azure Cosmos DB** per il salvataggio delle conversazioni
-- (Opzionale) **Docker** per la dashboard Aspire: `docker run --rm -p 18888:18888 -p 4317:18889 mcr.microsoft.com/dotnet/aspire-dashboard`
+- (Opzionale) **Docker** per l'emulatore Cosmos DB e la dashboard Aspire
 - (Opzionale) Azure CLI per l'autenticazione con `DefaultAzureCredential`
 
 ---
@@ -310,7 +298,6 @@ dotnet run
 | `http://localhost:5150/openai/v1/conversations` | OpenAI Conversations API |
 | `POST http://localhost:5150/game/join/{nome}` | Entra nella partita |
 | `GET http://localhost:5150/game/scoreboard` | Classifica corrente |
-| `GET http://localhost:5150/realtime/session` | Info per connessione GPT Realtime |
 | `http://localhost:18888` | **Dashboard Aspire** (se Docker attivo) |
 
 ---
@@ -334,12 +321,12 @@ Utente: "Lancio!"
 
 Game Master: "🎲 Lancio il dado... HO OTTENUTO UN 2! 🎉
              Mario avanza alla casella 2! Casella 😂 Barzelletta!
-             Passo la parola all'Agente Barzellette..."
+             Passo la parola all'Agente delle Prove..."
 
-[HANDOFF → joke-agent]
+[HANDOFF → challenge-agent]
 
-# 4️⃣ L'agente racconta la barzelletta e ATTENDE la risposta umana (HITL):
-Joke Agent: "😂 Attenzione, attenzione!
+# 4️⃣ L'agente esegue la prova e ATTENDE la risposta umana (HITL):
+Challenge Agent: "😂 Attenzione, attenzione!
             Setup: Why don't scientists trust atoms?
             ...
             🥁 Punchline: Because they make up everything!
@@ -350,9 +337,9 @@ Joke Agent: "😂 Attenzione, attenzione!
 
 Utente: "Sì, mi ha fatto ridere! 😂"
 
-Joke Agent: "🎉 +1 casella bonus! La risata è la miglior medicina! 😂"
+Challenge Agent: "🎉 +1 casella bonus! La risata è la miglior medicina! 😂"
 
-[HANDOFF BACK → game-master]
+[HANDOFF → score-agent → game-master]
 
 # 5️⃣ Il Game Master aspetta il prossimo turno (HITL):
 Game Master: "Ottimo Mario! Sei alla casella 3!
@@ -365,23 +352,25 @@ Game Master: "Ottimo Mario! Sei alla casella 3!
 
 | Feature | Implementazione |
 |---|---|
-| **1️⃣ Workflow** `AddWorkflow()` | Handoff workflow bi-direzionale tra 8 agenti |
+| **1️⃣ Workflow** `AddWorkflow()` | Handoff workflow tra 4 agenti: GM → Challenge/Prison → Score → GM |
 | **2️⃣ Context Windows** | `SlidingWindowCompactionStrategy` per gestione storia |
 | **3️⃣ Aspire Log AI** | OpenTelemetry con OTLP exporter verso dashboard Aspire |
-| **4️⃣ Agent-as-a-Tool** | Arbitro esposto come tool via `arbitroAgent.AsAIFunction()` |
+| **4️⃣ Agent-as-a-Tool** | Gli ex-agenti ora sono tool del Challenge Agent |
 | **5️⃣ Cosmos DB** | `WithCosmosDBChatHistoryProvider` per persistenza chat |
-| **6️⃣ GPT Realtime** | `GetRealtimeClient()` + `StartConversationSessionAsync()` |
-| `AddAIAgent()` | 8 agenti registrati in DI con istruzioni in italiano |
-| `WithAITool()` | Ogni agente ha il suo Function Tool collegato alla API |
+| `AddAIAgent()` | 4 agenti registrati in DI con istruzioni in italiano |
+| `WithAITool()` | Challenge Agent usa 6 tool (API pubbliche) + SearchMicrosoftLearn |
 | `AgentWorkflowBuilder.CreateHandoffBuilderWith()` | Game Master come punto di partenza |
-| `.WithHandoffs(gm, [agents])` | GM può passare il turno a 6 agenti |
-| `.WithHandoffs([agents], gm)` | Gli agenti tornano sempre al GM |
+| `.WithHandoffs(gm, [challenge, prison])` | GM può passare a Challenge o Prison |
+| `.WithHandoffs(challenge, [score])` | Challenge → Score |
+| `.WithHandoffs(prison, [score])` | Prison → Score |
+| `.WithHandoffs(score, [gm])` | Score torna al GM |
 | `AddWorkflow().AddAsAIAgent()` | Il workflow esposto come agente |
 | `builder.AddDevUI()` + `app.MapDevUI()` | DevUI su `/devui` |
 | `AddOpenAIResponses()` + `MapOpenAIResponses()` | Endpoint OpenAI-compatibile |
 | **Human-in-the-Loop** | Agenti attendono decisioni del giocatore umano |
 | `ConcurrentDictionary<string, PlayerState>` | Multi-player thread-safe (human + AI) |
 | `AIFunctionFactory.Create()` | Creazione tool da metodi del plugin |
+| **Tabellone Dinamico** | Caselle generate casualmente a runtime |
 
 ---
 

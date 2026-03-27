@@ -11,9 +11,8 @@ This repository uses Aspire to orchestrate its distributed application. Resource
 
 | Resource | Type | Description |
 |---|---|---|
-| `ai` | Azure AI Foundry | LLM models (gpt-4o-mini, gpt-4o-realtime-preview) |
+| `ai` | Azure AI Foundry | LLM models (gpt-4o-mini) |
 | `chat` | AI Foundry Deployment | gpt-4o-mini deployment |
-| `realtime` | AI Foundry Deployment | gpt-4o-realtime-preview deployment |
 | `cosmos` | Azure Cosmos DB | Database (emulator locally, Azure in prod) |
 | `GooseGameDB` | Cosmos Database | Game data and chat history |
 | `aigoosegame` | Project | Main game application |

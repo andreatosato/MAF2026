@@ -65,7 +65,7 @@ style: |
 | **5 min** | 🎲 Il Gioco dell'Oca — Concept & Architettura |
 | **10 min** | 🛠️ Code Walkthrough — Workflow, Tools, Agent-as-a-Tool |
 | **5 min** | 🧑 Human-in-the-Loop + Context Windows |
-| **5 min** | 📊 Aspire OTel + Cosmos DB + GPT Realtime |
+| **5 min** | 📊 Aspire OTel + Cosmos DB |
 | **10 min** | 🎮 Live Demo — DevUI in azione |
 | **5 min** | 📊 Recap & Risorse |
 
@@ -339,28 +339,6 @@ options.WithCosmosDBChatHistoryProvider(
 
 ---
 
-# 🎤 GPT Realtime (6️⃣)
-
-### Interazione vocale in tempo reale
-
-```csharp
-#pragma warning disable OPENAI002
-var realtimeClient = azureClient.GetRealtimeClient();
-var session = await realtimeClient
-    .StartConversationSessionAsync("gpt-4o-realtime-preview");
-#pragma warning restore OPENAI002
-```
-
-**Come funziona:**
-1. 🎙️ Il client si connette via WebSocket
-2. 🗣️ Il giocatore **parla** al Game Master
-3. 🔊 Il Game Master **risponde a voce**
-4. 🎲 Stesse regole, stesse prove, ma a voce!
-
-> Endpoint: `GET /realtime/session` → info di connessione WebSocket
-
----
-
 # 🛠️ DevUI — Debug Interattivo
 
 ### L'arma segreta per lo sviluppo di agenti!
@@ -459,7 +437,6 @@ public class GameState
 | 3️⃣ | **Aspire Log AI** | OpenTelemetry → Dashboard Aspire 📊 |
 | 4️⃣ | **Agent-as-a-Tool** | `arbitroAgent.AsAIFunction()` → tool del GM ⚖️ |
 | 5️⃣ | **Cosmos DB** | `WithCosmosDBChatHistoryProvider` 💾 |
-| 6️⃣ | **GPT Realtime** | `StartConversationSessionAsync()` 🎤 |
 | | **HITL** | Giocatore umano prende decisioni 🧑 |
 | | **Function Tools** | 6 API pubbliche + RollDice 🔧 |
 | | **DevUI** | Debug interattivo via browser 🛠️ |

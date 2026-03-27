@@ -58,5 +58,5 @@ Esegui con: `aspire start` o avvia il progetto `AIGooseGame.AppHost`
 - All'inizio del gioco si selezionano il numero di giocatori (2-4) e la dimensione del tabellone
 - Caselle: 🐶=Cane, 😂=Barzelletta, 🐱=Gatto, 🍹=Cocktail, 🎮=Pokémon, 📚=Quiz, 🔒=Prigione
 - Human-in-the-loop: ogni giocatore decide quando lanciare il dado
-- Azure AI Foundry per i modelli (gpt-4o-mini + gpt-4o-realtime-preview)
+- Azure AI Foundry per i modelli (gpt-4o-mini)
 - Cosmos DB emulatore in locale, Azure in produzione

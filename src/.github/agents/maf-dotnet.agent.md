@@ -147,7 +147,6 @@ builder.AddWorkflow("goose-game", (sp, key) =>
 // Azure AI Foundry con deployment modelli
 var aiFoundry = builder.AddAzureAIFoundry("goosegame");
 var chatDeployment = aiFoundry.AddDeployment("chat", AIFoundryModel.OpenAI.Gpt52Chat);
-var realtimeDeployment = aiFoundry.AddDeployment("realtime", AIFoundryModel.OpenAI.GptRealtime);
 
 // Cosmos DB — emulatore locale, Azure in produzione
 var cosmos = builder.AddAzureCosmosDB("cosmos").RunAsPreviewEmulator();
@@ -156,7 +155,6 @@ var cosmosDb = cosmos.AddCosmosDatabase("GooseGameDB");
 // Progetto con riferimenti alle risorse
 builder.AddProject<Projects.AIGooseGame>("aigoosegame")
     .WithReference(chatDeployment)
-    .WithReference(realtimeDeployment)
     .WithReference(cosmosDb)
     .WaitFor(cosmos);
 ```

@@ -10,35 +10,60 @@
 ┌────────────────────────────────────┐
 │     🎩 Game Master Agent           │
 │   (Orchestratore Handoff)          │
-│                                    │
-│   ┌──────────────────────────┐     │
-│   │ ⚖️ Arbitro (Agent-as-Tool) │     │
-│   └──────────────────────────┘     │
-└─────────────┬──────────────────────┘
-              │ Handoff Workflow
-    ┌─────────┼─────────┬─────────┬─────────┬─────────┬─────────┐
-    ▼         ▼         ▼         ▼         ▼         ▼         ▼
-┌───────┐ ┌───────┐ ┌───────┐ ┌───────┐ ┌───────┐ ┌───────┐ ┌───────┐
-│🐶 Dog │ │😂 Joke│ │🐱 Cat │ │🍹 Cock│ │🎮 Poke│ │🎲Bonus│ │📚 Quiz│
-│ Agent │ │ Agent │ │ Agent │ │ Agent │ │ Agent │ │ Agent │ │ Agent │
-└───┬───┘ └───────┘ └───┬───┘ └───┬───┘ └───┬───┘ └───────┘ └───┬───┘
-    │                   │         │         │                     │
-    ▼                   ▼         ▼         ▼                     ▼
-┌────────────────────────────────────────────────┐  ┌──────────────────────┐
-│           PublicApiPlugin (HTTP)                │  │ MicrosoftLearnPlugin │
-│  dog.ceo │ catfact │ cocktaildb │ pokeapi      │  │ (MCP via Responses)  │
-└────────────────────────────────────────────────┘  └──────────┬───────────┘
-                                                               │
-                                                               ▼
-                                                  ┌──────────────────────┐
-                                                  │  Microsoft Learn MCP │
-                                                  │  learn.microsoft.com │
-                                                  │      /api/mcp        │
-                                                  └──────────────────────┘
+│   Tools: RollDice, GetBoardInfo,   │
+│   JoinGame, InitializeGame, ...    │
+└───────┬────────────────┬───────────┘
+        │ Handoff         │ Handoff
+        ▼                 ▼
+┌──────────────────┐ ┌──────────────────┐
+│ 🎯 Challenge Agent│ │ 🔒 Prison Agent   │
+│  (Prove caselle)  │ │  (Fermo N turni)  │
+│                   │ │                   │
+│  Tools (ex-agenti │ │  Tools:           │
+│  ora come tool):  │ │  ApplyPrison      │
+│  🐶 GetRandomDog  │ └────────┬─────────┘
+│  😂 GetJoke       │          │
+│  🐱 GetCatFact    │          │
+│  🍹 GetCocktail   │          │
+│  🎮 GetPokemon    │          │
+│  📚 SearchLearn   │          │
+│  ApplyBonus       │          │
+└────────┬─────────┘          │
+         │                     │
+         └──────────┬──────────┘
+                    ▼
+         ┌──────────────────┐
+         │ 📊 Score Agent    │
+         │ (Punteggio/Turni) │
+         │                   │
+         │ Tools:            │
+         │ GetPlayerStatus   │
+         │ AdvanceToNext     │
+         └────────┬─────────┘
+                  │ Handoff
+                  ▼
+           🎩 Game Master
+           (Prossimo turno)
+
+─── Plugin condivisi ──────────────────────────
+
+┌────────────────────────────────────────────────┐
+│           PublicApiPlugin (HTTP)                │
+│  dog.ceo │ catfact │ cocktaildb │ pokeapi      │
+│  + GameState (dado, turni, tabellone, bonus)   │
+└────────────────────────────────────────────────┘
+
+┌──────────────────────┐
+│ MicrosoftLearnPlugin │
+│ (Search API HTTP)    │
+│ learn.microsoft.com  │
+└──────────────────────┘
+
+─── Infrastruttura ────────────────────────────
 
 ┌────────────────────────────────────┐
 │     Azure AI Foundry (LLM)         │
-│  gpt-4o-mini │ gpt-4o-realtime    │
+│           gpt-4o-mini              │
 └────────────────────────────────────┘
 
 ┌────────────────────────────────────┐
@@ -68,37 +93,22 @@
 ## Componenti
 
 ### Game Master Agent 🎩
-Orchestratore principale. Gestisce il flusso del gioco, lancia il dado, annuncia i risultati e delega agli agenti specializzati in base alla casella. Include l'Arbitro come Agent-as-a-Tool per verifiche regolamentari.
+Orchestratore principale. Gestisce il flusso del gioco, lancia il dado, annuncia i risultati e fa handoff al Challenge Agent (caselle con prove) o al Prison Agent (caselle prigione). Usa i tool di `PublicApiPlugin` per dado, tabellone, registrazione giocatori e controllo flusso di gioco.
 
-### Dog Agent 🐶 (caselle 1, 13, 19)
-Chiama l'API dog.ceo per mostrare un cane casuale. Se la razza è labrador/retriever, assegna +2 caselle bonus.
+### Challenge Agent 🎯
+Gestisce tutte le prove sulle caselle del tabellone. Gli ex-agenti specializzati (Dog, Joke, Cat, Cocktail, Pokemon, Quiz) sono ora **tool** di questo agente. In base al tipo di casella chiama il tool appropriato e gestisce bonus/malus. Dopo la prova fa handoff allo Score Agent.
 
-### Joke Agent 😂 (caselle 2, 8)
-Racconta barzellette in italiano. Se il giocatore ride, assegna +1 casella bonus.
+### Prison Agent 🔒
+Gestisce le caselle prigione. Applica la penalità di turni da saltare (1-2 turni) al giocatore che atterra su una casella 🔒. Dopo l'annuncio fa handoff allo Score Agent.
 
-### Cat Agent 🐱 (caselle 3, 9, 15)
-Chiama l'API catfact per curiosità sui gatti. Basandosi sulle ore di sonno, può concedere un turno extra.
-
-### Cocktail Agent 🍹 (caselle 4, 10, 16)
-Chiama l'API cocktaildb per suggerire un cocktail casuale con ricetta.
-
-### Pokemon Agent 🎮 (caselle 5, 11, 17)
-Chiama l'API pokeapi per mostrare un Pokémon casuale con le sue statistiche.
-
-### Bonus Agent 🎲 (caselle 6, 12, 18)
-Lancia un dado bonus per avanzare di ulteriori caselle.
-
-### Quiz Agent 📚 (caselle 7, 14) — MCP Microsoft Learn
-Usa il protocollo MCP (Model Context Protocol) tramite le OpenAI Responses API per cercare su Microsoft Learn e generare quiz interattivi su .NET/Azure. +3 caselle se il giocatore risponde correttamente, -1 se sbaglia. Integra il `MicrosoftLearnPlugin` che si collega al server MCP pubblico `https://learn.microsoft.com/api/mcp`.
-
-### Arbitro Agent ⚖️ (Agent-as-a-Tool)
-Verifica le regole del gioco. Invocato dal Game Master come function tool per risolvere dispute.
+### Score Agent 📊
+Aggiorna il punteggio del giocatore, verifica la posizione, gestisce il passaggio al giocatore successivo (saltando chi è in prigione) e fa handoff al Game Master per il prossimo turno.
 
 ### PublicApiPlugin
-Plugin condiviso che gestisce le chiamate HTTP alle API esterne (dog.ceo, catfact, cocktaildb, pokeapi).
+Plugin condiviso che gestisce le chiamate HTTP alle API esterne (dog.ceo, catfact, cocktaildb, pokeapi) e la logica di gioco (dado, tabellone dinamico, registrazione giocatori, prigione, bonus/malus, turni). Il tabellone è generato **casualmente** a runtime: ogni partita ha caselle diverse.
 
 ### MicrosoftLearnPlugin
-Plugin che usa le OpenAI Responses API con MCP Tool per cercare documentazione su Microsoft Learn in tempo reale. Genera quiz a risposta multipla su argomenti .NET/Azure con fallback statico in caso di errore.
+Plugin che usa la Search API pubblica di Microsoft Learn per cercare documentazione in tempo reale. La generazione dei quiz è delegata all'agente (IChatClient via MAF), non al plugin.
 
 ### Aspire AppHost
 Orchestrazione dell'applicazione: AI Foundry con deployment modelli, Cosmos DB con emulatore locale.
@@ -115,6 +125,6 @@ Orchestrazione dell'applicazione: AI Foundry con deployment modelli, Cosmos DB c
 
 Aspire gestisce tutte le connessioni tramite injection di variabili d'ambiente:
 
-- **AI Foundry**: endpoint e deployment (chat, realtime) via connection string
+- **AI Foundry**: endpoint e deployment (chat) via connection string
 - **Cosmos DB**: emulatore locale con `RunAsPreviewEmulator()`, Azure in produzione
 - **ServiceDefaults**: OpenTelemetry, health checks, resilience
